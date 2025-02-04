@@ -25,6 +25,84 @@ class FilteredRetriever(BaseRetriever):
     
     base_retriever: BaseRetriever = Field(description="Base retriever to filter and enhance")
     vector_store: Any = Field(description="Vector store for additional filtering")
+    item_store: Dict[str, List[Dict[str, Any]]] = Field(
+        default_factory=dict,
+        description="Dynamic item store containing categorized items and their metadata"
+    )
+    
+    def __init__(self, **data):
+        super().__init__(**data)
+        self._initialize_item_store()
+    
+    def _initialize_item_store(self):
+        """Initialize the item store with categorized items and metadata."""
+        # This would be populated from your item database files
+        # Structure example:
+        # {
+        #     "element": {
+        #         "fire": [{
+        #             "name": "Flame Essence",
+        #             "type": "consumable",
+        #             "rarity": "common",
+        #             "effects": ["attack_boost", "fire_damage"],
+        #             "description": "...",
+        #             "metadata": {...}
+        #         }],
+        #         "water": [...],
+        #     },
+        #     "type": {
+        #         "weapon": [...],
+        #         "armor": [...],
+        #         "consumable": [...]
+        #     },
+        #     "rarity": {
+        #         "common": [...],
+        #         "rare": [...],
+        #         "legendary": [...]
+        #     }
+        # }
+        pass  # To be implemented when item data sources are connected
+    
+    def _get_relevant_items(self, query: str, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        """Get relevant items based on query and filters."""
+        relevant_items = []
+        query_lower = query.lower()
+        
+        # Apply filters if provided
+        filtered_items = []
+        if filters:
+            for category, value in filters.items():
+                if category in self.item_store and value in self.item_store[category]:
+                    filtered_items.extend(self.item_store[category][value])
+        else:
+            # If no filters, search across all items
+            filtered_items = [
+                item 
+                for category in self.item_store.values()
+                for subcategory in category.values()
+                for item in subcategory
+            ]
+        
+        # Score and rank items based on query relevance
+        for item in filtered_items:
+            score = 0
+            # Check name match
+            if query_lower in item["name"].lower():
+                score += 2
+            # Check description match
+            if "description" in item and query_lower in item["description"].lower():
+                score += 1
+            # Check effects/properties match
+            if "effects" in item:
+                if any(query_lower in effect.lower() for effect in item["effects"]):
+                    score += 1
+            
+            if score > 0:
+                relevant_items.append((item, score))
+        
+        # Sort by relevance score
+        relevant_items.sort(key=lambda x: x[1], reverse=True)
+        return [item for item, _ in relevant_items]
     
     def _get_relevant_documents(self, query: str) -> List[Document]:
         """Synchronous implementation - required by BaseRetriever."""
@@ -50,13 +128,6 @@ class FilteredRetriever(BaseRetriever):
                 "dark": ["dark", "shadow", "night", "mysterious"]
             }
             
-            # Add specific item names to search
-            item_names = {
-                "fire": ["Flame Essence", "flame gems", "fire essence crystals"],
-                "water": ["Frost Crystal", "ice shard"],
-                "dark": ["Shadow Essence", "dark crystal"]
-            }
-            
             query_lower = input.lower()
             is_item_query = any(kw in query_lower for kw in item_keywords)
             is_ability_query = any(kw in query_lower for kw in ability_keywords)
@@ -75,26 +146,30 @@ class FilteredRetriever(BaseRetriever):
             try:
                 # Get item-specific results if it's an item query
                 if is_item_query:
-                    # Search for items using type metadata
-                    item_filter = {"metadata": {"type": "Item"}}
+                    # Get relevant items based on query and element type
+                    filters = {"element": element_type} if element_type else None
+                    relevant_items = self._get_relevant_items(input, filters)
                     
-                    # Create combined query with item names if we know the element
-                    if element_type and element_type in item_names:
-                        item_query = f"{input} {' '.join(item_names[element_type])}"
-                    else:
-                        item_query = input
-                    
-                    item_docs = self.vector_store.similarity_search(
-                        item_query,
-                        filter=item_filter,
-                        **search_kwargs
-                    )
-                    
-                    # Add unique item documents
-                    for doc in item_docs:
-                        if doc.page_content not in seen_contents:
-                            all_docs.append(doc)
-                            seen_contents.add(doc.page_content)
+                    # Convert items to documents
+                    for item in relevant_items:
+                        doc_content = (
+                            f"Name: {item['name']}\n"
+                            f"Type: {item.get('type', 'Unknown')}\n"
+                            f"Element: {item.get('element', 'None')}\n"
+                            f"Description: {item.get('description', '')}\n"
+                            f"Effects: {', '.join(item.get('effects', []))}\n"
+                        )
+                        
+                        if doc_content not in seen_contents:
+                            all_docs.append(Document(
+                                page_content=doc_content,
+                                metadata={
+                                    "type": "Item",
+                                    "name": item["name"],
+                                    **{k: v for k, v in item.items() if k not in ["name", "description"]}
+                                }
+                            ))
+                            seen_contents.add(doc_content)
                 
                 # Get ability-related results if it's an ability query or item query
                 if is_ability_query or is_item_query:
@@ -115,7 +190,7 @@ class FilteredRetriever(BaseRetriever):
                 
                 # Get element-specific results without filtering
                 if element_type:
-                    element_query = f"{input} {element_type} {' '.join(element_keywords[element_type])}"
+                    element_query = f"{input} {element_type}"
                     element_docs = self.vector_store.similarity_search(
                         element_query,
                         **search_kwargs
@@ -134,13 +209,8 @@ class FilteredRetriever(BaseRetriever):
             except Exception as e:
                 logger.warning(f"Error in specialized search, falling back to general search: {e}")
             
-            # Fallback to base retriever with enhanced query
-            enhanced_query = input
-            if element_type:
-                if element_type in item_names:
-                    enhanced_query = f"{input} {' '.join(item_names[element_type])}"
-                enhanced_query = f"{enhanced_query} {' '.join(element_keywords[element_type])}"
-            return self.base_retriever.invoke(enhanced_query)
+            # Fallback to base retriever
+            return self.base_retriever.invoke(input)
             
         except Exception as e:
             logger.error(f"Error in FilteredRetriever: {e}")
