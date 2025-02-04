@@ -17,7 +17,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 class FilteredRetriever(BaseRetriever):
-    """Custom retriever that filters and prioritizes items based on query type."""
+    """Custom retriever that filters and prioritizes items based on query type and narrative context."""
     
     model_config = {
         "arbitrary_types_allowed": True
@@ -29,10 +29,29 @@ class FilteredRetriever(BaseRetriever):
         default_factory=dict,
         description="Dynamic item store containing categorized items and their metadata"
     )
+    character_store: Dict[str, Dict[str, Any]] = Field(
+        default_factory=dict,
+        description="Character registry with metadata and relationships"
+    )
+    timeline_store: Dict[str, Dict[str, Any]] = Field(
+        default_factory=dict,
+        description="Timeline events and story arcs"
+    )
+    story_store: Dict[str, Dict[str, Any]] = Field(
+        default_factory=dict,
+        description="Story segments and narrative context"
+    )
     
     def __init__(self, **data):
         super().__init__(**data)
+        self._initialize_stores()
+    
+    def _initialize_stores(self):
+        """Initialize all data stores with categorized information."""
         self._initialize_item_store()
+        self._initialize_character_store()
+        self._initialize_timeline_store()
+        self._initialize_story_store()
     
     def _initialize_item_store(self):
         """Initialize the item store with categorized items and metadata."""
@@ -62,6 +81,58 @@ class FilteredRetriever(BaseRetriever):
         #     }
         # }
         pass  # To be implemented when item data sources are connected
+    
+    def _initialize_character_store(self):
+        """Initialize character registry with metadata and relationships."""
+        # Structure:
+        # {
+        #     "character_id": {
+        #         "name": str,
+        #         "type": str,
+        #         "affiliations": List[str],
+        #         "relationships": Dict[str, str],
+        #         "timeline_appearances": List[str],
+        #         "story_arcs": List[str],
+        #         "abilities": List[str],
+        #         "metadata": Dict[str, Any]
+        #     }
+        # }
+        pass  # To be populated from character data sources
+    
+    def _initialize_timeline_store(self):
+        """Initialize timeline with events and story arcs."""
+        # Structure:
+        # {
+        #     "event_id": {
+        #         "name": str,
+        #         "timestamp": str,
+        #         "location": str,
+        #         "characters": List[str],
+        #         "story_arc": str,
+        #         "description": str,
+        #         "consequences": List[str],
+        #         "metadata": Dict[str, Any]
+        #     }
+        # }
+        pass  # To be populated from timeline data
+    
+    def _initialize_story_store(self):
+        """Initialize story segments and narrative context."""
+        # Structure:
+        # {
+        #     "story_id": {
+        #         "title": str,
+        #         "arc": str,
+        #         "timeline_position": str,
+        #         "locations": List[str],
+        #         "characters": List[str],
+        #         "events": List[str],
+        #         "items": List[str],
+        #         "content": str,
+        #         "metadata": Dict[str, Any]
+        #     }
+        # }
+        pass  # To be populated from story data
     
     def _get_relevant_items(self, query: str, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """Get relevant items based on query and filters."""
@@ -104,6 +175,81 @@ class FilteredRetriever(BaseRetriever):
         relevant_items.sort(key=lambda x: x[1], reverse=True)
         return [item for item, _ in relevant_items]
     
+    def _get_relevant_characters(self, query: str, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        """Get relevant characters based on query and filters."""
+        relevant_chars = []
+        query_lower = query.lower()
+        
+        for char_id, char_data in self.character_store.items():
+            score = 0
+            # Name match
+            if query_lower in char_data["name"].lower():
+                score += 3
+            # Affiliation match
+            if any(query_lower in aff.lower() for aff in char_data.get("affiliations", [])):
+                score += 2
+            # Ability match
+            if any(query_lower in ability.lower() for ability in char_data.get("abilities", [])):
+                score += 1
+            
+            if score > 0:
+                relevant_chars.append((char_data, score))
+        
+        relevant_chars.sort(key=lambda x: x[1], reverse=True)
+        return [char for char, _ in relevant_chars]
+    
+    def _get_relevant_timeline_events(self, query: str, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        """Get relevant timeline events based on query and filters."""
+        relevant_events = []
+        query_lower = query.lower()
+        
+        for event_id, event_data in self.timeline_store.items():
+            score = 0
+            # Event name match
+            if query_lower in event_data["name"].lower():
+                score += 3
+            # Location match
+            if query_lower in event_data["location"].lower():
+                score += 2
+            # Character match
+            if any(query_lower in char.lower() for char in event_data.get("characters", [])):
+                score += 2
+            # Description match
+            if query_lower in event_data["description"].lower():
+                score += 1
+            
+            if score > 0:
+                relevant_events.append((event_data, score))
+        
+        relevant_events.sort(key=lambda x: x[1], reverse=True)
+        return [event for event, _ in relevant_events]
+    
+    def _get_relevant_story_segments(self, query: str, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        """Get relevant story segments based on query and filters."""
+        relevant_segments = []
+        query_lower = query.lower()
+        
+        for story_id, story_data in self.story_store.items():
+            score = 0
+            # Title match
+            if query_lower in story_data["title"].lower():
+                score += 3
+            # Character match
+            if any(query_lower in char.lower() for char in story_data.get("characters", [])):
+                score += 2
+            # Location match
+            if any(query_lower in loc.lower() for loc in story_data.get("locations", [])):
+                score += 2
+            # Content match
+            if query_lower in story_data["content"].lower():
+                score += 1
+            
+            if score > 0:
+                relevant_segments.append((story_data, score))
+        
+        relevant_segments.sort(key=lambda x: x[1], reverse=True)
+        return [segment for segment, _ in relevant_segments]
+    
     def _get_relevant_documents(self, query: str) -> List[Document]:
         """Synchronous implementation - required by BaseRetriever."""
         return self.invoke(query)
@@ -117,90 +263,105 @@ class FilteredRetriever(BaseRetriever):
         return await self._aget_relevant_documents(input)
     
     def invoke(self, input: str, **kwargs) -> List[Document]:
-        """Synchronous invoke implementation."""
+        """Enhanced invoke implementation with narrative context."""
         try:
-            # Check if this is an item-related query
-            item_keywords = ["item", "items", "equipment", "available", "use", "using"]
-            ability_keywords = ["attack", "power", "ability", "abilities", "skill", "skills"]
-            element_keywords = {
-                "fire": ["fire", "flame", "burning", "heat", "volcanic"],
-                "water": ["water", "aqua", "ice", "frost", "crystal"],
-                "dark": ["dark", "shadow", "night", "mysterious"]
-            }
+            # Detect query type keywords
+            character_keywords = ["character", "who", "person", "npc", "protagonist", "antagonist"]
+            timeline_keywords = ["when", "timeline", "history", "event", "happened", "occurred"]
+            story_keywords = ["story", "plot", "narrative", "tale", "saga", "chronicle"]
             
             query_lower = input.lower()
-            is_item_query = any(kw in query_lower for kw in item_keywords)
-            is_ability_query = any(kw in query_lower for kw in ability_keywords)
-            
-            # Detect element type from query
-            element_type = None
-            for element, keywords in element_keywords.items():
-                if any(kw in query_lower for kw in keywords):
-                    element_type = element
-                    break
+            is_character_query = any(kw in query_lower for kw in character_keywords)
+            is_timeline_query = any(kw in query_lower for kw in timeline_keywords)
+            is_story_query = any(kw in query_lower for kw in story_keywords)
             
             all_docs = []
             seen_contents = set()
-            search_kwargs = {"k": 5}
             
             try:
-                # Get item-specific results if it's an item query
-                if is_item_query:
-                    # Get relevant items based on query and element type
-                    filters = {"element": element_type} if element_type else None
-                    relevant_items = self._get_relevant_items(input, filters)
-                    
-                    # Convert items to documents
-                    for item in relevant_items:
+                # Get character-specific results
+                if is_character_query:
+                    relevant_chars = self._get_relevant_characters(input)
+                    for char in relevant_chars:
                         doc_content = (
-                            f"Name: {item['name']}\n"
-                            f"Type: {item.get('type', 'Unknown')}\n"
-                            f"Element: {item.get('element', 'None')}\n"
-                            f"Description: {item.get('description', '')}\n"
-                            f"Effects: {', '.join(item.get('effects', []))}\n"
+                            f"Character: {char['name']}\n"
+                            f"Type: {char.get('type', 'Unknown')}\n"
+                            f"Affiliations: {', '.join(char.get('affiliations', []))}\n"
+                            f"Abilities: {', '.join(char.get('abilities', []))}\n"
                         )
-                        
                         if doc_content not in seen_contents:
                             all_docs.append(Document(
                                 page_content=doc_content,
                                 metadata={
-                                    "type": "Item",
-                                    "name": item["name"],
-                                    **{k: v for k, v in item.items() if k not in ["name", "description"]}
+                                    "type": "Character",
+                                    "name": char["name"],
+                                    **{k: v for k, v in char.items() if k not in ["name"]}
                                 }
                             ))
                             seen_contents.add(doc_content)
                 
-                # Get ability-related results if it's an ability query or item query
-                if is_ability_query or is_item_query:
-                    ability_query = f"{input} abilities attacks powers"
-                    if element_type:
-                        ability_query = f"{ability_query} {element_type} element"
-                    
-                    ability_docs = self.vector_store.similarity_search(
-                        ability_query,
-                        **search_kwargs
-                    )
-                    
-                    # Add unique ability documents
-                    for doc in ability_docs:
-                        if doc.page_content not in seen_contents:
-                            all_docs.append(doc)
-                            seen_contents.add(doc.page_content)
+                # Get timeline-specific results
+                if is_timeline_query:
+                    relevant_events = self._get_relevant_timeline_events(input)
+                    for event in relevant_events:
+                        doc_content = (
+                            f"Event: {event['name']}\n"
+                            f"When: {event['timestamp']}\n"
+                            f"Location: {event['location']}\n"
+                            f"Description: {event['description']}\n"
+                        )
+                        if doc_content not in seen_contents:
+                            all_docs.append(Document(
+                                page_content=doc_content,
+                                metadata={
+                                    "type": "Event",
+                                    "name": event["name"],
+                                    **{k: v for k, v in event.items() if k not in ["name", "description"]}
+                                }
+                            ))
+                            seen_contents.add(doc_content)
                 
-                # Get element-specific results without filtering
-                if element_type:
-                    element_query = f"{input} {element_type}"
-                    element_docs = self.vector_store.similarity_search(
-                        element_query,
-                        **search_kwargs
+                # Get story-specific results
+                if is_story_query:
+                    relevant_segments = self._get_relevant_story_segments(input)
+                    for segment in relevant_segments:
+                        doc_content = (
+                            f"Story: {segment['title']}\n"
+                            f"Arc: {segment['arc']}\n"
+                            f"Characters: {', '.join(segment.get('characters', []))}\n"
+                            f"Content: {segment['content']}\n"
+                        )
+                        if doc_content not in seen_contents:
+                            all_docs.append(Document(
+                                page_content=doc_content,
+                                metadata={
+                                    "type": "Story",
+                                    "title": segment["title"],
+                                    **{k: v for k, v in segment.items() if k not in ["title", "content"]}
+                                }
+                            ))
+                            seen_contents.add(doc_content)
+                
+                # Get item-specific results (existing functionality)
+                item_docs = self._get_relevant_items(input)
+                for item in item_docs:
+                    doc_content = (
+                        f"Name: {item['name']}\n"
+                        f"Type: {item.get('type', 'Unknown')}\n"
+                        f"Element: {item.get('element', 'None')}\n"
+                        f"Description: {item.get('description', '')}\n"
+                        f"Effects: {', '.join(item.get('effects', []))}\n"
                     )
-                    
-                    # Add unique element documents
-                    for doc in element_docs:
-                        if doc.page_content not in seen_contents:
-                            all_docs.append(doc)
-                            seen_contents.add(doc.page_content)
+                    if doc_content not in seen_contents:
+                        all_docs.append(Document(
+                            page_content=doc_content,
+                            metadata={
+                                "type": "Item",
+                                "name": item["name"],
+                                **{k: v for k, v in item.items() if k not in ["name", "description"]}
+                            }
+                        ))
+                        seen_contents.add(doc_content)
                 
                 # If we have results, return them
                 if all_docs:
