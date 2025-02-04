@@ -8,10 +8,134 @@ from langchain.chains import ConversationalRetrievalChain
 from langchain_core.memory import BaseMemory
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
+from langchain_core.retrievers import BaseRetriever
+from langchain_core.documents import Document
+from pydantic import Field
 from .lore_validator import LoreValidator
 import logging
 
 logger = logging.getLogger(__name__)
+
+class FilteredRetriever(BaseRetriever):
+    """Custom retriever that filters and prioritizes items based on query type."""
+    
+    base_retriever: BaseRetriever = Field(description="Base retriever to filter and enhance")
+    vector_store: Any = Field(description="Vector store for additional filtering")
+    
+    class Config:
+        arbitrary_types_allowed = True
+    
+    async def _aget_relevant_documents(self, query: str) -> List[Document]:
+        """Async implementation - required by BaseRetriever."""
+        raise NotImplementedError("Async retrieval not implemented")
+    
+    def _get_relevant_documents(self, query: str) -> List[Document]:
+        """Get documents, prioritizing items for item-related queries."""
+        try:
+            # Check if this is an item-related query
+            item_keywords = ["item", "items", "equipment", "available", "use", "using"]
+            ability_keywords = ["attack", "power", "ability", "abilities", "skill", "skills"]
+            element_keywords = {
+                "fire": ["fire", "flame", "burning", "heat", "volcanic"],
+                "water": ["water", "aqua", "ice", "frost", "crystal"],
+                "dark": ["dark", "shadow", "night", "mysterious"]
+            }
+            
+            # Add specific item names to search
+            item_names = {
+                "fire": ["Flame Essence", "flame gems", "fire essence crystals"],
+                "water": ["Frost Crystal", "ice shard"],
+                "dark": ["Shadow Essence", "dark crystal"]
+            }
+            
+            query_lower = query.lower()
+            is_item_query = any(kw in query_lower for kw in item_keywords)
+            is_ability_query = any(kw in query_lower for kw in ability_keywords)
+            
+            # Detect element type from query
+            element_type = None
+            for element, keywords in element_keywords.items():
+                if any(kw in query_lower for kw in keywords):
+                    element_type = element
+                    break
+            
+            all_docs = []
+            seen_contents = set()
+            search_kwargs = {"k": 5}
+            
+            try:
+                # Get item-specific results if it's an item query
+                if is_item_query:
+                    # Search for items using type metadata
+                    item_filter = {"metadata": {"type": "Item"}}
+                    
+                    # Create combined query with item names if we know the element
+                    if element_type and element_type in item_names:
+                        item_query = f"{query} {' '.join(item_names[element_type])}"
+                    else:
+                        item_query = query
+                    
+                    item_docs = self.vector_store.similarity_search(
+                        item_query,
+                        filter=item_filter,
+                        **search_kwargs
+                    )
+                    
+                    # Add unique item documents
+                    for doc in item_docs:
+                        if doc.page_content not in seen_contents:
+                            all_docs.append(doc)
+                            seen_contents.add(doc.page_content)
+                
+                # Get ability-related results if it's an ability query or item query
+                if is_ability_query or is_item_query:
+                    ability_query = f"{query} abilities attacks powers"
+                    if element_type:
+                        ability_query = f"{ability_query} {element_type} element"
+                    
+                    ability_docs = self.vector_store.similarity_search(
+                        ability_query,
+                        **search_kwargs
+                    )
+                    
+                    # Add unique ability documents
+                    for doc in ability_docs:
+                        if doc.page_content not in seen_contents:
+                            all_docs.append(doc)
+                            seen_contents.add(doc.page_content)
+                
+                # Get element-specific results without filtering
+                if element_type:
+                    element_query = f"{query} {element_type} {' '.join(element_keywords[element_type])}"
+                    element_docs = self.vector_store.similarity_search(
+                        element_query,
+                        **search_kwargs
+                    )
+                    
+                    # Add unique element documents
+                    for doc in element_docs:
+                        if doc.page_content not in seen_contents:
+                            all_docs.append(doc)
+                            seen_contents.add(doc.page_content)
+                
+                # If we have results, return them
+                if all_docs:
+                    return all_docs[:4]  # Limit to top 4 results
+                
+            except Exception as e:
+                logger.warning(f"Error in specialized search, falling back to general search: {e}")
+            
+            # Fallback to base retriever with enhanced query
+            enhanced_query = query
+            if element_type:
+                if element_type in item_names:
+                    enhanced_query = f"{query} {' '.join(item_names[element_type])}"
+                enhanced_query = f"{enhanced_query} {' '.join(element_keywords[element_type])}"
+            return self.base_retriever.get_relevant_documents(enhanced_query)
+            
+        except Exception as e:
+            logger.error(f"Error in FilteredRetriever: {e}")
+            return self.base_retriever.get_relevant_documents(query)
 
 class LoreChatbot:
     """Manages conversations and lore interactions with users."""
@@ -61,12 +185,26 @@ class LoreChatbot:
 
             Remember:
             - Be friendly and enthusiastic about Hatchyverse lore
-            - Always mention specific items, locations, and creatures from the knowledge base when relevant
-            - If suggesting connections between elements, explain the reasoning
-            - For new submissions, check carefully against existing canon
-            - Highlight any potential conflicts with established lore
-            - Provide constructive feedback for improving submissions
-            - When discussing items or equipment, reference their exact names from the knowledge base
+            - ALWAYS mention specific items, locations, and creatures from the knowledge base by their EXACT names
+            - When discussing items or equipment:
+              * Start by listing ALL relevant items with their EXACT names
+              * Describe each item's abilities, powers, and attack capabilities
+              * Explain how these items enhance combat and abilities
+            - When discussing elements or types:
+              * Describe their unique abilities and attack styles
+              * Mention specific locations where they train or gather
+              * Include details about their powers and combat capabilities
+            - NEVER make up names - only use items/locations/creatures explicitly mentioned in the knowledge base
+            - Include specific details about abilities, attacks, and powers
+            - Be comprehensive in covering all relevant aspects (items, abilities, locations)
+            - Use exact terminology from the knowledge base
+
+            Format your response with clear sections:
+            1. Direct answer to the query
+            2. Available items/equipment (if relevant)
+            3. Related abilities and powers
+            4. Important locations
+            5. Additional relevant details
 
             Assistant:"""
         )
@@ -92,11 +230,27 @@ class LoreChatbot:
     
     def _create_qa_chain(self, llm: Any) -> ConversationalRetrievalChain:
         """Creates a ConversationalRetrievalChain with the specified LLM."""
-        return ConversationalRetrievalChain.from_llm(
-            llm=llm,
-            retriever=self.validator.vector_store.as_retriever(),
-            combine_docs_chain_kwargs={"prompt": self.base_prompt}
-        )
+        try:
+            # Create the filtered retriever
+            base_retriever = self.validator.vector_store.as_retriever()
+            filtered_retriever = FilteredRetriever(
+                base_retriever=base_retriever,
+                vector_store=self.validator.vector_store
+            )
+            
+            return ConversationalRetrievalChain.from_llm(
+                llm=llm,
+                retriever=filtered_retriever,
+                combine_docs_chain_kwargs={"prompt": self.base_prompt}
+            )
+        except Exception as e:
+            logger.error(f"Error creating QA chain: {e}")
+            # Fallback to simple retriever if filtered retriever fails
+            return ConversationalRetrievalChain.from_llm(
+                llm=llm,
+                retriever=self.validator.vector_store.as_retriever(),
+                combine_docs_chain_kwargs={"prompt": self.base_prompt}
+            )
     
     @retry(
         stop=stop_after_attempt(int(os.getenv("MAX_RETRIES", 3))),
