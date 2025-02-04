@@ -1,9 +1,10 @@
-# Hatchyverse Community Lore Chatbot
+# Hatchyverse Community Lore Management System
 
-An AI-powered chatbot system for exploring, validating, and contributing to the Hatchyverse lore. This system helps maintain consistency in the expanding Hatchyverse universe while enabling community participation in lore creation.
+An AI-powered system for exploring, managing, validating, and contributing to the Hatchyverse lore. This system helps maintain consistency in the expanding Hatchyverse universe while enabling community participation in lore creation.
 
 ## Features
 
+### Core Functionality
 - **Interactive Lore Exploration**: Users can ask questions about any aspect of Hatchyverse lore
 - **Semantic Search**: Advanced search capabilities using embeddings to find relevant lore
 - **Lore Validation**: Automatic checking of new submissions against existing canon
@@ -11,36 +12,119 @@ An AI-powered chatbot system for exploring, validating, and contributing to the 
 - **Conflict Detection**: Identifies potential contradictions with existing lore
 - **Constructive Feedback**: Provides suggestions for improving submissions
 
-## Architecture
+### Data Management
+- Load and manage monster data across multiple generations
+- Support for items, equipment, and world design data
+- Type-safe attributes with proper validation
+- Asset path management for images and sounds
+- Comprehensive test coverage
 
-### Core Components
+## Project Structure
 
-1. **LoreEntity (`src/models/lore_entity.py`)**
-   - Base model for all lore elements (monsters, items, locations, etc.)
-   - Handles metadata, relationships, and validation timestamps
-   - Supports rich entity relationships and hierarchies
+```
+hatchyverse/
+├── data/                    # Data files
+│   ├── Hatchy - Monster Data - gen 1.csv
+│   ├── Hatchy - Monster Data - gen 2.csv
+│   ├── PFP-hatchyverse - Masters data/
+│   └── Hatchy World _ world design.txt
+├── models/                  # Core data models
+│   ├── __init__.py
+│   ├── monster.py          # Monster class definition
+│   ├── data_loader.py      # Data loading functionality
+│   ├── lore_entity.py      # Base model for all lore elements
+│   └── lore_validator.py   # Lore validation logic
+├── api/                    # API endpoints
+│   └── main.py            # FastAPI routes
+├── tests/                  # Test files
+│   ├── __init__.py
+│   └── test_monster_loader.py
+├── requirements.txt        # Project dependencies
+└── README.md              # This file
+```
 
-2. **LoreValidator (`src/models/lore_validator.py`)**
-   - Manages the vector store for semantic search
-   - Performs conflict detection using similarity scoring
-   - Provides detailed validation feedback
-   - Features adaptive threshold optimization
+## Setup and Configuration
 
-3. **LoreChatbot (`src/models/chatbot.py`)**
-   - Handles user interactions and query processing
-   - Supports multiple AI model providers
-   - Maintains conversation context
-   - Processes both queries and submissions
+1. **Environment Setup**
 
-4. **DataLoader (`src/data/data_loader.py`)**
-   - Processes various data formats (CSV, TXT)
-   - Loads and normalizes existing lore
-   - Handles different entity types:
-     - Monsters
-     - Items
-     - World/Location data
+# Install dependencies
+pip install -r requirements.txt
+```
 
-### API Endpoints (`src/api/main.py`)
+2. **Configuration**
+Create a `.env` file with:
+```env
+# Common settings
+DATA_DIR=./data
+VECTOR_STORE_PATH=./data/vector_store
+
+# Choose your model provider (openai/anthropic/deepseek)
+MODEL_PROVIDER=openai
+
+# Provider-specific settings
+OPENAI_API_KEY=your_key_here
+OPENAI_MODEL_NAME=gpt-4-1106-preview
+
+# Optional: Alternative providers
+ANTHROPIC_API_KEY=your_key_here
+ANTHROPIC_MODEL_NAME=claude-3-sonnet-20240229
+
+DEEPSEEK_API_KEY=your_key_here
+DEEPSEEK_MODEL_NAME=deepseek-chat
+```
+
+3. **Data Preparation**
+Place your data files in the `data` directory:
+- `monsters.csv`: Monster/creature data
+- `items.csv`: Equipment and items
+- `world_design.txt`: World building and locations
+
+4. **Running the Application**
+```bash
+uvicorn src.api.main:app --reload
+```
+
+## Usage
+
+### Basic Data Access
+```python
+from models import DataLoader, Element
+
+# Create a data loader instance
+loader = DataLoader()
+
+# Load monster data
+loader.load_gen1_monsters()
+loader.load_gen2_monsters()
+
+# Get a specific monster by ID
+celestion = loader.get_monster_by_id(0)
+print(celestion)  # Celestion (Void) - ID: 0
+
+# Get all monsters of a specific element
+plant_monsters = loader.get_monsters_by_element(Element.PLANT)
+for monster in plant_monsters:
+    print(monster.name)
+```
+
+### Lore Exploration API
+```python
+from api.main import lore_chatbot
+
+# Ask questions about the lore
+response = lore_chatbot.ask("Tell me about water-type Hatchies")
+
+# Submit new lore for validation
+submission = {
+    "name": "Frostflame",
+    "entity_type": "Monster",
+    "element": "Ice",
+    "description": "A rare Hatchy that can control both ice and fire."
+}
+validation_result = lore_chatbot.validate_submission(submission)
+```
+
+### API Endpoints
 
 - **/chat**: Handle general lore queries
   - POST: Accept user messages
@@ -53,81 +137,6 @@ An AI-powered chatbot system for exploring, validating, and contributing to the 
 - **/health**: System health monitoring
   - GET: Check system status
   - Returns: Component health information
-
-## Setup
-
-1. **Environment Setup**
-   ```bash
-   # Clone the repository
-   git clone [repository-url]
-   cd hatchyverse-lore-chatbot
-
-   # Create and activate virtual environment
-   python -m venv venv
-   source venv/bin/activate  # Unix
-   # or
-   .\venv\Scripts\activate  # Windows
-
-   # Install dependencies
-   pip install -r requirements.txt
-   ```
-
-2. **Configuration**
-   Create a `.env` file with:
-   ```env
-   # Common settings
-   DATA_DIR=./data
-   VECTOR_STORE_PATH=./data/vector_store
-
-   # Choose your model provider (openai/anthropic/deepseek)
-   MODEL_PROVIDER=openai
-
-   # Provider-specific settings
-   OPENAI_API_KEY=your_key_here
-   OPENAI_MODEL_NAME=gpt-4-1106-preview
-
-   # Optional: Alternative providers
-   ANTHROPIC_API_KEY=your_key_here
-   ANTHROPIC_MODEL_NAME=claude-3-sonnet-20240229
-
-   DEEPSEEK_API_KEY=your_key_here
-   DEEPSEEK_MODEL_NAME=deepseek-chat
-   ```
-
-3. **Data Preparation**
-   Place your data files in the `data` directory:
-   - `monsters.csv`: Monster/creature data
-   - `items.csv`: Equipment and items
-   - `world_design.txt`: World building and locations
-
-4. **Running the Application**
-   ```bash
-   uvicorn src.api.main:app --reload
-   ```
-
-## Usage
-
-### Querying Lore
-```bash
-curl -X POST "http://localhost:8000/chat" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message": "Tell me about water-type Hatchies",
-    "chat_history": []
-  }'
-```
-
-### Submitting New Lore
-```bash
-curl -X POST "http://localhost:8000/submit" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Frostflame",
-    "entity_type": "Monster",
-    "element": "Ice",
-    "content": "A rare Hatchy that can control both ice and fire."
-  }'
-```
 
 ## Data Models
 
@@ -150,6 +159,13 @@ curl -X POST "http://localhost:8000/submit" \
 }
 ```
 
+## Testing
+
+Run the tests using pytest:
+```bash
+pytest tests/
+```
+
 ## Validation Process
 
 1. **Semantic Analysis**
@@ -161,11 +177,13 @@ curl -X POST "http://localhost:8000/submit" \
    - Checks element consistency
    - Validates relationship logic
    - Verifies power level balance
+   - Ensures consistency with existing canon
 
 3. **Feedback Generation**
    - Provides specific improvement suggestions
    - Highlights related existing lore
    - Explains any detected conflicts
+   - Suggests ways to maintain consistency
 
 ## Contributing
 
@@ -177,7 +195,7 @@ curl -X POST "http://localhost:8000/submit" \
 
 ## License
 
-[Your License Here]
+MIT License
 
 ## Acknowledgments
 

@@ -136,10 +136,16 @@ class LoreValidator:
     def build_knowledge_base(self, documents: List[LoreEntity]) -> None:
         """Creates or updates the vector store with provided lore entities."""
         try:
+            logger.debug(f"Building knowledge base with {len(documents) if documents else 'None'} documents")
+            
+            if documents is None:
+                raise ValueError("documents parameter cannot be None")
+                
             texts = []
             metadatas = []
             
             for entity in documents:
+                logger.debug(f"Processing entity: {entity.name} ({entity.entity_type})")
                 # Create rich text representation
                 text = (
                     f"Name: {entity.name}\n"
@@ -153,6 +159,7 @@ class LoreValidator:
                 
                 # Split into chunks if needed
                 chunks = self.splitter.split_text(text)
+                logger.debug(f"Split into {len(chunks)} chunks")
                 
                 for chunk in chunks:
                     texts.append(chunk)
@@ -165,6 +172,7 @@ class LoreValidator:
             
             # Create or update vector store
             if self.vector_store is None:
+                logger.debug("Creating new vector store")
                 self.vector_store = FAISS.from_texts(
                     texts,
                     self.embeddings,
@@ -172,11 +180,12 @@ class LoreValidator:
                 )
                 logger.info(f"Created new vector store with {len(texts)} chunks")
             else:
+                logger.debug("Updating existing vector store")
                 self.vector_store.add_texts(texts, metadatas=metadatas)
                 logger.info(f"Added {len(texts)} new chunks to vector store")
                 
         except Exception as e:
-            logger.error(f"Error building knowledge base: {str(e)}")
+            logger.error(f"Error building knowledge base: {str(e)}", exc_info=True)
             raise
 
     def _create_conflict_entry(self, doc: Any, score: float, reason: str) -> Dict[str, Any]:

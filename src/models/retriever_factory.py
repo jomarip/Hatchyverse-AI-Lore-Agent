@@ -2,7 +2,7 @@
 
 from typing import Optional
 from langchain_core.retrievers import BaseRetriever
-from .data_loader import DataLoader
+from ..data.data_loader import DataLoader
 from .chatbot import FilteredRetriever
 import logging
 

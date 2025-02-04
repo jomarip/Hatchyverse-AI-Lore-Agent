@@ -19,6 +19,13 @@ langchain-core>=0.1.10
 pydantic>=2.5.2
 faiss-cpu>=1.7.4
 
+# Core dependencies
+pathlib>=1.0.1
+
+# Testing dependencies
+pytest>=7.4.0
+pytest-cov>=4.1.0
+
 
 
 

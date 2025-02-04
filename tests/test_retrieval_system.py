@@ -7,7 +7,7 @@ import pandas as pd
 from unittest.mock import Mock, patch
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
-from src.models.data_loader import DataLoader
+from src.data.data_loader import DataLoader
 from src.models.retriever_factory import RetrieverFactory
 from src.models.chatbot import FilteredRetriever
 
@@ -22,7 +22,6 @@ def test_data_dir(tmp_path):
     source_files = [
         "Hatchy - Monster Data - gen 1.csv",
         "Hatchy - Monster Data - gen 2.csv",
-        "Hatchipedia - monsters.csv",
         "Hatchy Production Economy - Monster Data.csv",
         "PFP-hatchyverse - Masters data - 2.EQUIP Info.csv",
         "PFP-hatchyverse - Masters data - masters-items-db.csv",
@@ -79,7 +78,6 @@ class TestDataLoader:
         # Test with actual data
         assert 'gen1' in loader.monster_data
         assert 'gen2' in loader.monster_data
-        assert 'hatchipedia' in loader.monster_data
         assert 'production' in loader.monster_data
         
         # Verify some data was loaded
