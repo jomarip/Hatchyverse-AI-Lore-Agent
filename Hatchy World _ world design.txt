@@ -1,0 +1,441 @@
+﻿Hatchy World : World design
+High-Level Direction of Life and Death
+* Life: The harmonious interplay between the five elements plus void (represented as white) embodies the cycle of creation, growth, and potential.
+* Death: The abyssal element stands for corruption, representing the inevitable decay and transformation that follows the end of life.
+Elements
+Fire
+* Theme: Red, fire, and lava.
+* Motifs: Volcanic activity, molten lava flows, smoldering landscapes.
+* Life Affinity: Represents the burning passion and changeability of life.
+Water
+* Theme: Blue, water, and ice.
+* Motifs: Oceanic expanses, ice formations, serene beaches, and coral reefs.
+* Life Affinity: Symbolizes life's adaptability and emotional depth.
+Plant
+* Theme: Green, plants, and earth.
+* Motifs: Verdant forests, sprawling jungles, and fertile grasslands.
+* Life Affinity: Embodies growth, nature, and the nurturing aspects of life.
+Light
+* Theme: Yellow with sun, holy, and wind motifs.
+* Motifs: Radiant landscapes, areas imbued with sunlight, and sanctified sites.
+* Life Affinity: Signifies guidance, clarity, divinity, and the freedom of the wind.
+Dark
+* Theme: Purple, moon, toxicity, and illusion.
+* Motifs: Nocturnal environments, toxic swamps, and areas of deceptive magic.
+* Life Affinity: Reflects mystery, the unknown, and the transformative power of life.
+Void
+* Theme: Gray, space, and dimensional/gravitational anomalies.
+* Motifs: Cosmic voids, gravitational distortions, and interdimensional rifts.
+* Life Affinity: Represents infinite possibilities and the space between life and death.
+Abyssal
+* Theme: Black, undead, corruption, twisted forms, and horror.
+* Motifs: Lands of the dead, corrupted terrains, and twisted, nightmarish scenes.
+* Death Affinity: Symbolizes decay, the end of cycles, and the corruption of life.
+
+
+
+
+
+
+Elemental Disposition Chart
+
+
+  
+
+
+
+
+
+
+
+Locations
+Listed below are all the biomes for each element with an extra section each element for the featured corrupted biome
+Structure
+The structure of environments and how they are often navigated
+Biomes(fields)
+There are external fields known as biomes for each element with an extra section each element for the featured corrupted biome, e.g abyssal water, abyssal fire etc
+Landmarks(dungeons)
+Each biome may have an entrance to its iconic locations into a dungeon-like experience, e.g pyramid dungeon entered through desert biome
+Landmarks may also be corrupted or ascended
+Fire
+* lava pools, 
+   * Volcano, Lava pools
+  
+
+   * Lava Tubes
+
+
+
+
+* Volcanic Ridges
+Lava covered mountains external area, foot of the volcano
+* Charcoal Forests
+* Pyroclastic Fields
+* Sulfur Springs
+* Cinder Valleys
+* Flame Geyser Basins
+* Shifting Sands
+   * Behaves like maze, keeps changing
+  
+
+   * Sand dungeon
+      * desert cave
+  
+
+         * Desert Cave Ruins
+         *   
+
+   * Molten Quarries
+
+
+
+
+   * Fire
+   * Fire temple, 
+
+
+   * volcano
+  
+
+   * Fire Temple of the Inferno Deity
+   * Caldera of the Phoenix
+   * Emberhold Fortress
+   * Salamander Caves
+   * Crucible Arena
+   * Smoldering Altar
+   * Lava-Carved Palaces
+   * Charred Plains Battleground
+   * Flamecaller’s Tower
+   * Searing Mines
+
+
+Abyssal Fire
+   * Corrupted pyramid
+  
+
+   * Ashen Wastelands
+Corruption-seeping, destroyed wasteland 
+Water
+   * Beaches, 
+   * Beach sea caves
+   * underwater, 
+   * Ocean, 
+   * tundra, 
+   * Coral reef, 
+   * icey mountain
+   * Glacial Fjords
+   * Misty Archipelagos
+   * Kelp Forests
+   * Monsoon Meadows
+   * Serene Lagoons
+   * Flooded Caverns
+   * Permafrost Tundras
+   * Brackish Estuaries
+   * Waterfall Cliffs
+   * Marshy Deltas
+
+
+   * Water
+   * Water temple, 
+   * coral reef, 
+   * beach cave, 
+   * trench
+   * Coral Cathedral
+   * Hydromancer’s Labyrinth
+   * Frostwhisper Harbor
+   * Aquatic Research Sanctum
+   * Leviathan’s Trench
+   * Whirlpool Portal
+   * Siren’s Cove
+   * Sunken Shipwrecks
+   * Icicle Monastery
+
+
+Abyssal Fire
+   * Corrupted sea caves
+  
+
+   * Haunted shipwreck
+  
+
+   * Corrupted Ice fields
+  
+
+   * Corrupted Ice temple
+  
+
+Plant
+   * Forest, 
+   * jungle, 
+   * grasslands, 
+   * Emerald Rainforests
+   * Vibrant Savannas
+   * Fungal Groves
+   * Blossoming Valleys
+   * Druidic Circles
+   * Thicket Mazes
+   * Overgrown Ruins
+   * Harvest Plains
+   * Sacred Orchards
+   * Canopy Treehouses
+   * Jungle pyramid
+   * Jungle ruins
+
+
+   * Plant
+   * Plant Temple of the Harvest Spirit
+   * World Tree Nexus
+   * Verdant Conservatory
+   * Bloomhaven Village
+   * Sylvan Altar
+   * Herbalist’s Retreat
+   * Nature’s Coliseum
+   * Wildthorn Castle
+   * Entwood Sanctuary
+   * Terraced Gardens
+
+
+Light (Holy/Wind)
+   * Sunlit Plains: Vast grasslands where the breeze always blows.
+   * Sky Temples: High altitudes where structures are built to honor the sky gods.
+   * Wind Canyons: Narrow passages where the wind howls and shapes the land.
+   * Monastery of the Four Winds
+   *    *    * Dawn lit Peaks
+   * Light Temple of the Solar Deity
+   * Solarium of the Sun Priests
+   * Zephyr Fields
+   * Windmills: Not just for grain—some are ancient structures harnessing elemental power.
+
+
+   * Halo Lakes
+   * Radiant Glades
+   * Windswept Uplands
+   * Luminous Beaches
+   * lighthouse
+   * Skyward Steppes
+   * Cloud Castles: Majestic citadels floating in the sky, accessible by air or magic.
+   * Wind Palace of the Cloud King
+   * Aurora Forests
+   * Divine Plateaus
+
+
+Abyssal Light
+   * Sunscorched Badlands
+   * Corrupted Angelic Spires
+
+
+
+
+Landmarks
+   * Beacon of the Heavenly Watch
+   * Nimbus Arena
+   * Shrine of the Ascendant
+   * Pilgrimage of the Sylphs
+   * Vortex Pillars
+
+
+Dark(poison, shadow)
+   * Twilight Canyons
+   * Moonlit Moors
+   * Shadow Forests
+   * Duskfall Basins
+   * Eclipsed Lands
+   * Gloomrock Caves
+   * Shrouded Barrens
+   * Nightshade Jungles
+   * Tenebrous Swamps
+   * Obsidian Mountains
+   * Toxic lakes
+
+
+   * Dark
+   * Dark Temple of the Nocturnal Entity
+   * Shadowspire Stronghold
+   * Eclipse Citadel
+   * Enigma Vaults
+   * Veilstone Castle
+   * Nethermist Keep
+   * Abyssal Observatory
+   * Specter’s Retreat
+   * Phantom Groves
+   * Umbrageous Altar
+
+
+
+
+Void(gravity, interdimensional, space)
+   * Portal lands, 
+   * floating voidlands, 
+   * space, 
+   * dimensional rift
+   * Gravitational Anomaly Fields
+   * Cosmic Rift Valleys
+   * Nebula Meadows
+   * Dark Matter Lakes
+   * Singularity Caves
+   * Event Horizon Edges
+   * Voidstone Cliffs
+   * Quantum Forests
+   * Pulsar Plains
+   * Interstellar Gardens
+
+
+   * Void
+   * Void Temple of the Cosmos
+   * Dimensional Crossroads
+   * Singularity Core
+   * Starforge Grounds
+   * Orbital Sanctum
+   * Riftwalker’s Haven
+   * Continuum Archives
+   * Space-Time Towers
+   * Nullpoint Cathedral
+   * Vortex Garden
+
+
+Abyssal (Death, undead, cursed)
+   * Necropolis, 
+   * abyssal rift, 
+   * corrupted lands, 
+   * abyssal void, 
+   * Graveyards: Resting places of heroes and the fallen, possibly with undead encounters.
+   * Haunted Woods: Dense forests where spirits roam, and the line between life and death blurs.
+   * Barrens: Lifeless expanses that bear the scars of abyssal influence.
+   * Corrupted Crags
+   * Forsaken Wastes
+   * Hauntwood Forests
+   * Desecrated Graveyards
+   * Blightbog Marshes
+   * Withered Hollows
+   * Ghoul's Gorge
+   * Morbid Mausoleums
+   * Tombstone Trails
+   * Cursed Catacombs
+
+
+   * Abyssal
+   * Necropolis of the Damned
+   * Doom Temple of the Fallen
+   * Spire of Malevolence
+   * Crypt of Shadows
+   * Altar of the Voidheart
+   * Lich’s Lair
+   * Ossuary Bastion
+   * Pit of Despair
+   * Sorrow's End
+   * Deathgate Fortress
+   * Tombs of the Unknown: Enigmatic mausoleums housing powerful artifacts.
+   * Altars of Despair: Places of dark rituals, often sought out for forbidden power.
+
+
+
+
+
+
+
+
+Vegetation
+
+
+  
+
+  
+
+
+
+
+
+
+
+
+
+Region
+   1. Country: Hydar
+   * Government system: 
+   * Monarchy
+   * Capital: 
+   * Ixor
+   * City:
+   * Esoghor
+   * Dhumeorneon
+   * Village:
+   * Obsae Village
+   * Shibsae Village
+   * Dungeon:
+   * Windcarved Mountains
+   * Light Temple
+   * The Detta of Evolution
+   2. Country: Greenhaven
+   * Government system: 
+   * Monarchy
+   * Capital:
+   * City:
+   * Village: 
+   * Leaf Village
+   * Chambra Temple
+   * Dungeon:
+   * Doppelganger Forest
+   * The Dark Forest
+   * The Grassy Sea
+   * Leaf Temple
+   3. Country: Artaria
+   * Government system: 
+   * Monarchy
+   * Capital: 
+   * Water City
+   * City:
+   * Village:
+   * Dungeon:
+   * Ruthless Swamp
+   * Water Temple
+   4. Country: Holy Badlands
+   * Government system: 
+   * Monarchy
+   * Capital: 
+   * Old Port
+   * City:
+   * Village:
+   * Biwerene Village
+   * Dungeon:
+   * The Broken Stones
+   * Caldera of the Phoenix
+   * Fire Temple
+   * Emberhold Fortress
+   * Salamander Caves
+   * Smoldering Altar
+   * Lava-Carved Palaces
+   * Fire Temple of the Inferno Deity
+   * Charred Plains Battleground
+   * Crucible Arena
+   * Flamecaller’s Tower
+   * Searing Mines
+   5. Country: Akwar
+   * Government system:
+   * Monarchy
+   * Capital:
+   * City:
+   * Village:
+   * Dungeon:
+   * Spring of Sol
+   * Geysers and Hotsprings
+   * The Fault of Hatchy
+   * Dark Temple
+   6. Country: Pyroth
+   * Government system: 
+   * Democracy
+   * Capital:
+   * City:
+   * Village:
+   * Dungeon:
+   * Magma Fields
+   * Bay of Metal
+   * Dragon’s Den
+   * Void Temple
+   * The Haunted Mines
+   7. Country: The Dark Lands (Unofficial and uninhabited)
+   * Government system: -
+   * Capital: -
+   * City: -
+   * Village: -
+   * Dungeon:
+   * The Abysmal Grotto

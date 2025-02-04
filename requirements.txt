@@ -1,0 +1,24 @@
+langchain>=0.1.0
+langchain-community>=0.0.10
+langchain-core>=0.1.10
+pydantic>=2.5.2
+faiss-cpu>=1.7.4
+python-dotenv>=1.0.0
+openai>=1.12.0  # For ChatGPT
+anthropic>=0.18.1  # For Claude
+deepseek>=0.1.0  # For Deepseek
+pandas>=2.2.0
+numpy>=1.26.2
+fastapi>=0.110.0
+uvicorn>=0.27.0
+python-multipart>=0.0.6
+tiktoken>=0.5.2 
+langchain>=0.1.0
+langchain-community>=0.0.10
+langchain-core>=0.1.10
+pydantic>=2.5.2
+faiss-cpu>=1.7.4
+
+
+
+
