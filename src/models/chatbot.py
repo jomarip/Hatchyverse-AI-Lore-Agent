@@ -10,7 +10,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.documents import Document
-from pydantic import Field
+from pydantic import Field, ConfigDict
 from .lore_validator import LoreValidator
 import logging
 
@@ -19,18 +19,27 @@ logger = logging.getLogger(__name__)
 class FilteredRetriever(BaseRetriever):
     """Custom retriever that filters and prioritizes items based on query type."""
     
+    model_config = {
+        "arbitrary_types_allowed": True
+    }
+    
     base_retriever: BaseRetriever = Field(description="Base retriever to filter and enhance")
     vector_store: Any = Field(description="Vector store for additional filtering")
     
-    class Config:
-        arbitrary_types_allowed = True
+    def _get_relevant_documents(self, query: str) -> List[Document]:
+        """Synchronous implementation - required by BaseRetriever."""
+        return self.invoke(query)
     
     async def _aget_relevant_documents(self, query: str) -> List[Document]:
         """Async implementation - required by BaseRetriever."""
         raise NotImplementedError("Async retrieval not implemented")
     
-    def _get_relevant_documents(self, query: str) -> List[Document]:
-        """Get documents, prioritizing items for item-related queries."""
+    async def ainvoke(self, input: str, **kwargs) -> List[Document]:
+        """Async invoke implementation."""
+        return await self._aget_relevant_documents(input)
+    
+    def invoke(self, input: str, **kwargs) -> List[Document]:
+        """Synchronous invoke implementation."""
         try:
             # Check if this is an item-related query
             item_keywords = ["item", "items", "equipment", "available", "use", "using"]
@@ -48,7 +57,7 @@ class FilteredRetriever(BaseRetriever):
                 "dark": ["Shadow Essence", "dark crystal"]
             }
             
-            query_lower = query.lower()
+            query_lower = input.lower()
             is_item_query = any(kw in query_lower for kw in item_keywords)
             is_ability_query = any(kw in query_lower for kw in ability_keywords)
             
@@ -71,9 +80,9 @@ class FilteredRetriever(BaseRetriever):
                     
                     # Create combined query with item names if we know the element
                     if element_type and element_type in item_names:
-                        item_query = f"{query} {' '.join(item_names[element_type])}"
+                        item_query = f"{input} {' '.join(item_names[element_type])}"
                     else:
-                        item_query = query
+                        item_query = input
                     
                     item_docs = self.vector_store.similarity_search(
                         item_query,
@@ -89,7 +98,7 @@ class FilteredRetriever(BaseRetriever):
                 
                 # Get ability-related results if it's an ability query or item query
                 if is_ability_query or is_item_query:
-                    ability_query = f"{query} abilities attacks powers"
+                    ability_query = f"{input} abilities attacks powers"
                     if element_type:
                         ability_query = f"{ability_query} {element_type} element"
                     
@@ -106,7 +115,7 @@ class FilteredRetriever(BaseRetriever):
                 
                 # Get element-specific results without filtering
                 if element_type:
-                    element_query = f"{query} {element_type} {' '.join(element_keywords[element_type])}"
+                    element_query = f"{input} {element_type} {' '.join(element_keywords[element_type])}"
                     element_docs = self.vector_store.similarity_search(
                         element_query,
                         **search_kwargs
@@ -126,16 +135,16 @@ class FilteredRetriever(BaseRetriever):
                 logger.warning(f"Error in specialized search, falling back to general search: {e}")
             
             # Fallback to base retriever with enhanced query
-            enhanced_query = query
+            enhanced_query = input
             if element_type:
                 if element_type in item_names:
-                    enhanced_query = f"{query} {' '.join(item_names[element_type])}"
+                    enhanced_query = f"{input} {' '.join(item_names[element_type])}"
                 enhanced_query = f"{enhanced_query} {' '.join(element_keywords[element_type])}"
-            return self.base_retriever.get_relevant_documents(enhanced_query)
+            return self.base_retriever.invoke(enhanced_query)
             
         except Exception as e:
             logger.error(f"Error in FilteredRetriever: {e}")
-            return self.base_retriever.get_relevant_documents(query)
+            return self.base_retriever.invoke(input)
 
 class LoreChatbot:
     """Manages conversations and lore interactions with users."""
@@ -187,7 +196,10 @@ class LoreChatbot:
             - Be friendly and enthusiastic about Hatchyverse lore
             - ALWAYS mention specific items, locations, and creatures from the knowledge base by their EXACT names
             - When discussing items or equipment:
-              * Start by listing ALL relevant items with their EXACT names
+              * Start by listing ALL relevant items with their EXACT names from the knowledge base
+              * For fire-type items, ALWAYS mention Flame Essence, flame gems, and fire essence crystals
+              * For water-type items, ALWAYS mention Frost Crystal and ice shard
+              * For dark-type items, ALWAYS mention Shadow Essence and dark crystal
               * Describe each item's abilities, powers, and attack capabilities
               * Explain how these items enhance combat and abilities
             - When discussing elements or types:
