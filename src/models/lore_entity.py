@@ -1,30 +1,54 @@
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from pydantic import BaseModel, Field
 from datetime import datetime
 
+class EntityReference(BaseModel):
+    """Reference to another entity with context"""
+    entity_id: str
+    relationship_type: str
+    context: str
+    source_text: str
+
 class LoreEntity(BaseModel):
-    """Base model for all lore entities in the Hatchyverse."""
-    id: str = Field(..., description="Unique identifier for the entity")
-    name: str = Field(..., description="Name of the entity")
-    entity_type: str = Field(..., description="Type of entity (Character/Location/Item/Event/Monster)")
-    element: Optional[str] = Field(None, description="Element type if applicable")
-    description: str = Field(..., description="Detailed description of the entity")
-    relationships: Dict[str, List[str]] = Field(
-        default_factory=dict,
-        description="Related entities and their relationship types"
-    )
-    sources: List[str] = Field(
-        default_factory=list,
-        description="Source documents where this entity is referenced"
-    )
-    last_validated: datetime = Field(
-        default_factory=datetime.now,
-        description="Timestamp of last validation"
-    )
-    metadata: Dict[str, str] = Field(
-        default_factory=dict,
-        description="Additional metadata specific to entity type"
-    )
+    """Enhanced base model for all lore elements with better cross-referencing."""
+    
+    id: str
+    name: str
+    entity_type: str
+    element: Optional[str] = None
+    description: str
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    sources: List[str] = Field(default_factory=list)
+    
+    # Enhanced relationship tracking
+    references: List[EntityReference] = Field(default_factory=list)
+    mentioned_in: List[str] = Field(default_factory=list)  # IDs of entities that mention this one
+    context_tags: List[str] = Field(default_factory=list)  # Semantic tags for better retrieval
+    
+    # Source text fragments that define this entity
+    source_fragments: List[Dict[str, str]] = Field(default_factory=list)
+    
+    def add_reference(self, target_id: str, relationship: str, context: str, source: str):
+        """Add a reference to another entity with context."""
+        self.references.append(EntityReference(
+            entity_id=target_id,
+            relationship_type=relationship,
+            context=context,
+            source_text=source
+        ))
+    
+    def add_source_fragment(self, text: str, source: str, context_type: str):
+        """Add a source text fragment with context."""
+        self.source_fragments.append({
+            "text": text,
+            "source": source,
+            "context_type": context_type
+        })
+    
+    def add_context_tags(self, tags: List[str]):
+        """Add semantic context tags for improved retrieval."""
+        self.context_tags.extend(tags)
+        self.context_tags = list(set(self.context_tags))  # Remove duplicates
 
     class Config:
         json_schema_extra = {

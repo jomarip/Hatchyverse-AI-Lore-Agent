@@ -4,6 +4,8 @@ import os
 from ..models.lore_entity import LoreEntity
 import logging
 import glob
+from collections import defaultdict
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -255,40 +257,161 @@ class DataLoader:
                     logger.error(f"Error loading world data from {file_path}: {str(e)}", exc_info=True)
                     
     def _parse_story_content(self, content: str) -> List[Dict[str, Any]]:
-        """Parse story content into segments."""
+        """Parse story content into segments with enhanced semantic understanding."""
         segments = []
         current_segment = None
         
-        for line in content.split('\n'):
-            line = line.strip()
+        # Enhanced keywords for better concept detection
+        concept_keywords = {
+            'evolution': ['evolve', 'evolution', 'transform', 'stage', 'form'],
+            'ability': ['ability', 'power', 'skill', 'attack', 'technique'],
+            'location': ['found in', 'located', 'habitat', 'region', 'area', 'omniterra', 'felkyn'],  # Added specific locations
+            'relationship': ['friend', 'enemy', 'ally', 'companion', 'rival', 'mentor'],
+            'mechanics': ['ride', 'mount', 'equip', 'use', 'activate', 'summon'],
+            'rarity': ['rare', 'legendary', 'mythical', 'unique', 'special', 'ancient'],
+            'world': ['world', 'omniterra', 'continent', 'realm', 'dimension', 'felkyn', 'chaos'],  # Enhanced world concepts
+            'lore': ['prophecy', 'legend', 'myth', 'history', 'tale', 'saga']  # Added lore concepts
+        }
+        
+        # Enhanced section detection
+        section_markers = {
+            'chapter': r'Chapter\s+\d+|Episode\s+\d+',
+            'arc': r'Arc\s*\d*:.*|Saga:.*',
+            'scene': r'Scene\s*\d*:.*|\*\*\*|\-{3,}',
+            'location': r'Location:.*|Setting:.*',
+            'character': r'Character:.*|Cast:.*'
+        }
+        
+        lines = content.split('\n')
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
             if not line:
+                i += 1
                 continue
-                
-            if line.startswith('#') or line.isupper():
+            
+            # Check for section markers
+            is_section_start = False
+            section_type = None
+            for marker_type, pattern in section_markers.items():
+                if re.match(pattern, line, re.IGNORECASE):
+                    is_section_start = True
+                    section_type = marker_type
+                    break
+            
+            if is_section_start or line.startswith('#') or line.isupper():
                 if current_segment:
+                    self._enrich_segment_metadata(current_segment, concept_keywords)
                     segments.append(current_segment)
+                
                 current_segment = {
                     'title': line.lstrip('#').strip(),
                     'content': '',
                     'characters': [],
-                    'locations': []
+                    'locations': [],
+                    'concepts': defaultdict(list),
+                    'context_tags': set(),
+                    'world_concepts': [],
+                    'section_type': section_type or 'general'
                 }
             elif current_segment:
                 current_segment['content'] += line + '\n'
                 
-                # Extract characters and locations
+                # Enhanced annotation extraction
                 if '*' in line:
                     parts = line.split('*')
                     for part in parts[1:]:
+                        part = part.strip()
                         if 'Character:' in part:
-                            current_segment['characters'].append(part.replace('Character:', '').strip())
+                            char_name = part.replace('Character:', '').strip()
+                            current_segment['characters'].append({
+                                'name': char_name,
+                                'context': line
+                            })
                         elif 'Location:' in part:
-                            current_segment['locations'].append(part.replace('Location:', '').strip())
-        
-        if current_segment:
-            segments.append(current_segment)
+                            loc_name = part.replace('Location:', '').strip()
+                            current_segment['locations'].append({
+                                'name': loc_name,
+                                'context': line
+                            })
+                
+                # Enhanced world concept detection
+                for concept_type, keywords in concept_keywords.items():
+                    for keyword in keywords:
+                        if keyword.lower() in line.lower():
+                            # Get surrounding context
+                            context_start = max(0, i - 2)
+                            context_end = min(len(lines), i + 3)
+                            context = '\n'.join(lines[context_start:context_end])
+                            
+                            if concept_type == 'world':
+                                current_segment['world_concepts'].append({
+                                    'concept': keyword,
+                                    'context': context
+                                })
+                            current_segment['concepts'][concept_type].append({
+                                'keyword': keyword,
+                                'context': context
+                            })
+                            current_segment['context_tags'].add(concept_type)
             
+            i += 1
+        
+        # Process the last segment
+        if current_segment:
+            self._enrich_segment_metadata(current_segment, concept_keywords)
+            segments.append(current_segment)
+        
         return segments
+        
+    def _enrich_segment_metadata(self, segment: Dict[str, Any], concept_keywords: Dict[str, List[str]]):
+        """Enrich segment with metadata and cross-references."""
+        content_lower = segment['content'].lower()
+        
+        # Extract character relationships
+        for char in segment['characters']:
+            char_name = char['name'].lower()
+            for rel_type in ['friend', 'enemy', 'ally', 'rival', 'mentor']:
+                if rel_type in content_lower:
+                    # Find sentences containing both character and relationship
+                    sentences = segment['content'].split('.')
+                    for sentence in sentences:
+                        if char_name in sentence.lower() and rel_type in sentence.lower():
+                            if 'relationships' not in char:
+                                char['relationships'] = []
+                            char['relationships'].append({
+                                'type': rel_type,
+                                'context': sentence.strip()
+                            })
+        
+        # Extract location details
+        for loc in segment['locations']:
+            loc_name = loc['name'].lower()
+            # Find descriptive sentences about the location
+            sentences = segment['content'].split('.')
+            for sentence in sentences:
+                if loc_name in sentence.lower():
+                    if 'descriptions' not in loc:
+                        loc['descriptions'] = []
+                    loc['descriptions'].append(sentence.strip())
+        
+        # Add thematic tags
+        segment['themes'] = []
+        theme_patterns = {
+            'conflict': ['battle', 'fight', 'struggle', 'conflict'],
+            'friendship': ['friend', 'together', 'bond', 'trust'],
+            'growth': ['learn', 'grow', 'change', 'develop'],
+            'destiny': ['fate', 'destiny', 'prophecy', 'chosen'],
+            'power': ['strength', 'power', 'ability', 'force']
+        }
+        
+        for theme, patterns in theme_patterns.items():
+            if any(pattern in content_lower for pattern in patterns):
+                segment['themes'].append(theme)
+                segment['context_tags'].add(f'theme_{theme}')
+        
+        # Convert tags to list for JSON serialization
+        segment['context_tags'] = list(segment['context_tags'])
         
     def _parse_world_content(self, content: str) -> Dict[str, Any]:
         """Parse world design content."""
@@ -296,52 +419,81 @@ class DataLoader:
             'elements': {},
             'regions': {},
             'landmarks': [],
-            'lore': []
+            'lore': [],
+            'world_concepts': [],  # Added to store high-level world concepts
+            'locations': []  # Added to store major locations
         }
         
         current_section = None
         current_data = {}
         
-        for line in content.split('\n'):
-            line = line.strip()
+        # Keywords for world concepts
+        world_keywords = ['world', 'omniterra', 'continent', 'realm', 'dimension']
+        
+        # First pass - extract high-level world concepts
+        lines = content.split('\n')
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
             if not line:
+                i += 1
                 continue
-                
-            # Handle section headers
-            if line.endswith(':'):
-                if current_section and current_data:
-                    if current_section == 'Element':
-                        world_data['elements'][current_data['name']] = current_data
-                    elif current_section == 'Region':
-                        world_data['regions'][current_data['name']] = current_data
-                
-                current_section = line[:-1].strip()
-                current_data = {'name': current_section}
-                
-            # Handle region content
-            elif line.startswith('-'):
-                if current_section == 'Region':
-                    if 'locations' not in current_data:
-                        current_data['locations'] = []
-                    if 'landmarks' not in current_data:
-                        current_data['landmarks'] = []
-                        
-                    location = line[1:].strip()
-                    if any(keyword in location.lower() for keyword in 
-                        ['temple', 'fortress', 'cave', 'palace', 'tower', 'shrine']):
-                        current_data['landmarks'].append(location)
-                        world_data['landmarks'].append(location)
-                    else:
-                        current_data['locations'].append(location)
-                        
-            # Handle key-value pairs
-            elif ':' in line:
-                key, value = line.split(':', 1)
-                current_data[key.strip().lower()] = value.strip()
             
-            # Handle lore content
-            elif line.startswith('THEMES') or line.startswith('ABOUT'):
-                world_data['lore'].append(line)
+            # Look for world-level concepts - more flexible matching
+            if any(keyword in line.lower() for keyword in world_keywords):
+                concept = {
+                    'name': line.split(':')[0] if ':' in line else line,
+                    'description': '',
+                    'type': 'world_concept'
+                }
+                
+                # Gather description from following lines
+                j = i + 1
+                while j < len(lines) and lines[j].strip() and not any(lines[j].strip().endswith(c) for c in [':', '*']):
+                    concept['description'] += lines[j].strip() + ' '
+                    j += 1
+                
+                world_data['world_concepts'].append(concept)
+                i = j  # Skip the lines we've processed
+            else:
+                # Handle section headers
+                if line.endswith(':'):
+                    if current_section and current_data:
+                        if current_section == 'Element':
+                            world_data['elements'][current_data['name']] = current_data
+                        elif current_section == 'Region':
+                            world_data['regions'][current_data['name']] = current_data
+                    
+                    current_section = line[:-1].strip()
+                    current_data = {'name': current_section}
+                    
+                # Handle region content
+                elif line.startswith('-'):
+                    if current_section == 'Region':
+                        if 'locations' not in current_data:
+                            current_data['locations'] = []
+                        if 'landmarks' not in current_data:
+                            current_data['landmarks'] = []
+                            
+                        location = line[1:].strip()
+                        if any(keyword in location.lower() for keyword in 
+                            ['temple', 'fortress', 'cave', 'palace', 'tower', 'shrine']):
+                            current_data['landmarks'].append(location)
+                            world_data['landmarks'].append(location)
+                        else:
+                            current_data['locations'].append(location)
+                            world_data['locations'].append(location)
+                            
+                # Handle key-value pairs
+                elif ':' in line:
+                    key, value = line.split(':', 1)
+                    current_data[key.strip().lower()] = value.strip()
+                
+                # Handle lore content
+                elif line.startswith('THEMES') or line.startswith('ABOUT'):
+                    world_data['lore'].append(line)
+                
+                i += 1
                 
         # Add final section
         if current_section and current_data:
@@ -401,18 +553,66 @@ class DataLoader:
             try:
                 for i, segment in enumerate(data['segments']):
                     try:
+                        # Create rich description including concept contexts
+                        rich_description = segment['content']
+                        for concept_type, concepts in segment['concepts'].items():
+                            if concepts:
+                                rich_description += f"\n\n{concept_type.title()} Information:\n"
+                                for concept in concepts:
+                                    rich_description += f"- {concept['context']}\n"
+                        
+                        # Add world concepts if present
+                        if segment.get('world_concepts'):
+                            rich_description += "\n\nWorld Concepts:\n"
+                            for concept in segment['world_concepts']:
+                                rich_description += f"- {concept['concept']}\n"
+                        
+                        # Create metadata with semantic information
+                        metadata = {
+                            'title': segment['title'],
+                            'concepts': segment['concepts'],
+                            'context_tags': segment['context_tags'],
+                            'world_concepts': segment.get('world_concepts', [])  # Add world concepts to metadata
+                        }
+                        
+                        # Create entity with enhanced metadata
                         entity = LoreEntity(
                             id=f"story_segment_{i}",
                             name=segment['title'],
                             entity_type="Story",
-                            description=segment['content'],
+                            description=rich_description,
+                            metadata=metadata,
                             relationships={
                                 'characters': segment['characters'],
                                 'locations': segment['locations']
                             },
                             sources=[source]
                         )
+                        
+                        # Add context tags including world-related ones
+                        entity.add_context_tags(segment['context_tags'])
+                        if segment.get('world_concepts'):
+                            entity.add_context_tags(['world_lore', 'omniterra_lore'])
+                        
+                        # Add source fragments for better retrieval
+                        for concept_type, concepts in segment['concepts'].items():
+                            for concept in concepts:
+                                entity.add_source_fragment(
+                                    text=concept['context'],
+                                    source=source,
+                                    context_type=concept_type
+                                )
+                        
+                        # Add world concepts as source fragments
+                        for concept in segment.get('world_concepts', []):
+                            entity.add_source_fragment(
+                                text=concept['concept'],
+                                source=source,
+                                context_type='world_concept'
+                            )
+                        
                         entities.append(entity)
+                        
                     except Exception as e:
                         logger.error(f"Failed to process story segment {i} from {source}: {str(e)}", exc_info=True)
                         continue
@@ -420,9 +620,25 @@ class DataLoader:
                 logger.error(f"Failed to process story data from {source}: {str(e)}", exc_info=True)
                 continue
         
-        # Process world data
+        # Process world data with enhanced world concept handling
         for source, data in self.world_data.items():
             try:
+                # Process world concepts first
+                for concept in data.get('world_concepts', []):
+                    try:
+                        entity = LoreEntity(
+                            id=f"world_concept_{concept['name'].lower().replace(' ', '_')}",
+                            name=concept['name'],
+                            entity_type="WorldConcept",
+                            description=concept['description'],
+                            metadata={'type': concept['type']},
+                            sources=[source]
+                        )
+                        entities.append(entity)
+                    except Exception as e:
+                        logger.error(f"Failed to process world concept {concept['name']}: {str(e)}", exc_info=True)
+                        continue
+                
                 # Process elements
                 for element_name, element_data in data.get('elements', {}).items():
                     try:
@@ -479,4 +695,92 @@ class DataLoader:
             for entity_type, count in type_counts.items():
                 logger.debug(f"  {entity_type}: {count}")
         
-        return entities 
+        return entities
+
+    def _process_text_content(self, text: str, source: str) -> List[Dict[str, Any]]:
+        """Process text content to extract entity mentions and relationships."""
+        fragments = []
+        
+        # Split into manageable chunks
+        paragraphs = text.split('\n\n')
+        for para in paragraphs:
+            # Extract entity mentions
+            entity_mentions = self._extract_entity_mentions(para)
+            
+            if entity_mentions:
+                fragments.append({
+                    'text': para,
+                    'source': source,
+                    'mentions': entity_mentions,
+                    'context_type': self._determine_context_type(para)
+                })
+        
+        return fragments
+    
+    def _extract_entity_mentions(self, text: str) -> List[Dict[str, str]]:
+        """Extract mentions of known entities from text."""
+        mentions = []
+        
+        # Check for known entities
+        for entity in self.all_entities.values():
+            if entity.name.lower() in text.lower():
+                context = self._extract_context(text, entity.name)
+                mentions.append({
+                    'entity_id': entity.id,
+                    'name': entity.name,
+                    'context': context
+                })
+        
+        return mentions
+    
+    def _determine_context_type(self, text: str) -> str:
+        """Determine the type of context for a text fragment."""
+        context_indicators = {
+            'evolution': ['evolve', 'evolution', 'transform'],
+            'ability': ['ability', 'power', 'skill'],
+            'location': ['found in', 'located', 'habitat'],
+            'relationship': ['friend', 'enemy', 'ally'],
+            'lore': ['legend', 'story', 'myth']
+        }
+        
+        for context_type, indicators in context_indicators.items():
+            if any(indicator in text.lower() for indicator in indicators):
+                return context_type
+        
+        return 'general'
+    
+    def _extract_context(self, text: str, entity_name: str) -> str:
+        """Extract relevant context around an entity mention."""
+        # Find the sentence containing the entity
+        sentences = text.split('.')
+        for sentence in sentences:
+            if entity_name.lower() in sentence.lower():
+                return sentence.strip()
+        return ""
+    
+    def _link_entities(self):
+        """Create relationships between entities based on mentions."""
+        for entity in self.all_entities.values():
+            for fragment in entity.source_fragments:
+                for mention in fragment.get('mentions', []):
+                    if mention['entity_id'] in self.all_entities:
+                        target_entity = self.all_entities[mention['entity_id']]
+                        
+                        # Add cross-references
+                        entity.add_reference(
+                            target_id=target_entity.id,
+                            relationship=fragment['context_type'],
+                            context=mention['context'],
+                            source=fragment['source']
+                        )
+                        
+                        # Add reverse reference
+                        target_entity.mentioned_in.append(entity.id)
+                        
+                        # Add context tags
+                        both_entities = [entity, target_entity]
+                        for e in both_entities:
+                            e.add_context_tags([
+                                fragment['context_type'],
+                                f"related_{e.entity_type.lower()}"
+                            ]) 
