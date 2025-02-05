@@ -6,7 +6,7 @@ from langchain_openai import ChatOpenAI
 from langchain_community.chat_models import ChatAnthropic
 from langchain.chains import ConversationalRetrievalChain
 from langchain_core.memory import BaseMemory
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.documents import Document
@@ -494,39 +494,39 @@ class LoreChatbot:
         """)
         
     def _create_qa_chain(self) -> ConversationalRetrievalChain:
-        """Creates a ConversationalRetrievalChain with the current LLM and data."""
-        try:
-            if not self.validator.vector_store:
-                # Create initial vector store if none exists
-                initial_texts = ["Hatchyverse initialization document"]
-                self.validator.vector_store = FAISS.from_texts(
-                    initial_texts,
-                    self.validator.embeddings
-                )
-            
-            # Create the filtered retriever
-            base_retriever = self.validator.vector_store.as_retriever()
-            filtered_retriever = FilteredRetriever(
-                base_retriever=base_retriever,
-                vector_store=self.validator.vector_store
-            )
-            
-            return ConversationalRetrievalChain.from_llm(
-                llm=self.primary_llm,
-                retriever=filtered_retriever,
-                combine_docs_chain_kwargs={"prompt": self.base_prompt}
-            )
-        except Exception as e:
-            logger.error(f"Error creating QA chain: {e}")
-            # Fallback to simple retriever if filtered retriever fails
-            if self.validator.vector_store:
-                return ConversationalRetrievalChain.from_llm(
-                    llm=self.primary_llm,
-                    retriever=self.validator.vector_store.as_retriever(),
-                    combine_docs_chain_kwargs={"prompt": self.base_prompt}
-                )
-            else:
-                raise ValueError("No vector store available for QA chain creation")
+        """Create chain with anti-hallucination safeguards."""
+        qa_prompt = ChatPromptTemplate.from_messages([
+            SystemMessagePromptTemplate.from_template("""
+                You are a Hatchyverse Lore Expert. Follow these rules:
+                
+                1. Only use information from the provided context
+                2. If unsure, say "According to available records..."
+                3. Never invent names or numbers
+                4. Cite sources from metadata when possible
+                
+                Available Data:
+                {formatted_data}
+                
+                Current Conversation:
+                {chat_history}
+                
+                Question: 
+                {question}
+                
+                Context:
+                {context}
+                """),
+            HumanMessagePromptTemplate.from_template("{question}")
+        ])
+        
+        return ConversationalRetrievalChain.from_llm(
+            self.primary_llm,
+            self.validator.vector_store.as_retriever(),
+            combine_docs_chain_kwargs={"prompt": qa_prompt},
+            return_source_documents=True,
+            memory=None,  # No memory needed as we handle history explicitly
+            verbose=True
+        )
     
     @retry(
         stop=stop_after_attempt(int(os.getenv("MAX_RETRIES", 3))),
@@ -710,9 +710,6 @@ class LoreChatbot:
             # Format chat history
             formatted_history = self._format_chat_history(chat_history)
             
-            # Combine all context
-            full_context = f"{data_summary}\n\n{context}\n\n{formatted_history}"
-            
             # Create QA chain if needed
             if not self.qa_chain:
                 self.qa_chain = self._create_qa_chain()
@@ -721,7 +718,8 @@ class LoreChatbot:
             response = self.qa_chain.invoke({
                 "question": query,
                 "chat_history": chat_history,
-                "context": full_context,
+                "context": context,
+                "formatted_data": data_summary,  # Add the formatted data here
                 "available_data": data_summary
             })
             
@@ -1613,41 +1611,55 @@ class LoreChatbot:
         return "\n".join(formatted_history)
 
     def _get_relevant_context(self, query: str, filters: Optional[Dict[str, Any]] = None) -> str:
-        """Get relevant context for the query using the validator's knowledge base."""
+        """Get relevant context for the query."""
         try:
-            # Initialize empty context
-            context_parts = []
+            # Extract generation number if query is about gen1/gen2/etc
+            gen_match = re.search(r'gen\s*(\d+)', query.lower())
+            generation = int(gen_match.group(1)) if gen_match else None
             
-            # Get relevant documents from vector store
-            if self.validator and self.validator.vector_store:
-                # Search with query
-                results = self.validator.vector_store.similarity_search(
-                    query,
-                    k=5,  # Get top 5 relevant documents
-                    filter=filters
-                )
+            # If asking about specific generation of Hatchy
+            if generation and 'hatchy' in self.data_store:
+                # Get Hatchy data from the specific generation file
+                gen_hatchy = [h for h in self.data_store['hatchy'] 
+                             if h.get('_source_file', '').lower() == f'hatchy - monster data - gen {generation}.csv']
                 
-                # Extract and format content from results
-                for doc in results:
+                if gen_hatchy:
+                    # Group by element
+                    by_element = defaultdict(list)
+                    for hatchy in gen_hatchy:
+                        element = hatchy.get('Element', 'Unknown')
+                        by_element[element].append(hatchy)
+                    
+                    # Format response
+                    response_parts = [f"## Gen{generation} Hatchy List\n"]
+                    
+                    # Add each element section
+                    for element, hatchies in sorted(by_element.items()):
+                        response_parts.append(f"\n### {element} Element")
+                        for hatchy in sorted(hatchies, key=lambda x: x.get('Name', '')):
+                            name = hatchy.get('Name', 'Unknown')
+                            desc = hatchy.get('Description', '').strip()
+                            response_parts.append(f"{name} - {desc}")
+                    
+                    return "\n".join(response_parts)
+            
+            # Get base context for other queries
+            relevant_docs = self.validator.search_knowledge_base(query)
+            if relevant_docs:
+                # Handle both Document objects and dictionaries
+                context_parts = []
+                for doc in relevant_docs:
                     if hasattr(doc, 'page_content'):
                         context_parts.append(doc.page_content)
                     elif isinstance(doc, dict):
-                        context_parts.append(doc.get('content', ''))
-            
-            # If no context found through vector store, try data store
-            if not context_parts and filters:
-                for data_type, type_filters in filters.items():
-                    matching_entities = self.get_specific_entities(data_type, type_filters)
-                    for entity in matching_entities[:3]:  # Limit to top 3 matches
-                        if isinstance(entity, dict):
-                            # Format entity details
-                            context_parts.append(self._format_entity_details([entity]))
-            
-            # Return formatted context or default message
-            if context_parts:
-                return "\n\n".join(context_parts)
-            return "No directly relevant context found."
+                        # Extract content from dictionary format
+                        if 'content' in doc:
+                            context_parts.append(doc['content'])
+                        elif 'text' in doc:
+                            context_parts.append(doc['text'])
+                return "\n".join(context_parts)
+            return ""
             
         except Exception as e:
             logger.error(f"Error getting relevant context: {str(e)}")
-            return "Error retrieving context." 
+            return "" 

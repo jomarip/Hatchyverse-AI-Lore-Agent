@@ -1,6 +1,24 @@
 # Hatchyverse Community Lore Management System
+# Hatchyverse Lore AI Agent for Decentralized IP
 
-An AI-powered system for exploring, managing, validating, and contributing to the Hatchyverse lore. This system helps maintain consistency in the expanding Hatchyverse universe while enabling community participation in lore creation.
+## Overview
+A decentralized intellectual property management system powered by AI that enables real-time lore evolution and validation.
+
+## Core Concept
+Our platform transforms traditional fan wikis into dynamic, AI-powered narrative hubs by:
+
+- Leveraging advanced language models (LLMs) and semantic search (via LangChain and FAISS/Pinecone)
+- Enabling real-time lore co-creation and validation between fans, developers and artists
+- Facilitating decentralized, community-governed IP management on Web3 platforms like Avalanche
+- Reducing production costs while empowering community creators
+
+## Key Features
+
+### Dynamic Narrative Engine
+- AI "Lorekeepers" that provide context and guide lore contributions
+- Real-time conflict detection to maintain canonical consistency
+- Interactive fan query system for lore exploration
+
 
 ## Features
 

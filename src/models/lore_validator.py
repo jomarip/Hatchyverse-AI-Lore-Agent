@@ -7,6 +7,8 @@ import logging
 from collections import defaultdict
 from itertools import chain
 import re
+from langchain.prompts import ChatPromptTemplate
+from langchain.chains import LLMChain
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -891,4 +893,35 @@ class LoreValidator:
         else:
             validation["issues"].append("Limited character interactions")
             
-        return validation 
+        return validation
+
+    def validate_response(self, response: str, context: str) -> dict:
+        """Ensure response is fully grounded in context."""
+        validation_prompt = ChatPromptTemplate.from_template("""
+            You are a Hatchyverse Fact Checker. Validate this response against the provided context.
+            
+            Response to validate:
+            {response}
+            
+            Supporting Context:
+            {context}
+            
+            Rules:
+            1. Reject any names/terms not explicitly in context
+            2. Flag unsupported numerical claims 
+            3. Mark any speculative phrases like "would likely"
+            4. Return JSON with keys: "is_valid", "errors", "corrected_response"
+            
+            Output JSON:
+        """)
+        
+        chain = validation_prompt | self.llm.with_structured_output(
+            schema=dict,
+            method="json_mode",
+            include_raw=False
+        )
+        
+        return chain.invoke({
+            "response": response,
+            "context": context
+        }) 

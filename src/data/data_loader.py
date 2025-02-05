@@ -19,7 +19,8 @@ class DataLoader:
         'description': ['Description', 'description', 'desc'],
         'id': ['Monster ID', 'id', 'monster_id'],
         'height': ['Height', 'height'],
-        'weight': ['Weight', 'weight']
+        'weight': ['Weight', 'weight'],
+        'generation': ['Generation', 'gen', 'version']
     }
     
     ITEM_COLUMNS = {
@@ -63,47 +64,37 @@ class DataLoader:
         return True
         
     def _process_monsters(self, df: pd.DataFrame, source: str) -> List[LoreEntity]:
-        """Process monster DataFrame into LoreEntity objects."""
+        """Process monster data with generation tracking."""
         entities = []
         
-        for idx, row in df.iterrows():
+        # Extract generation from filename if not in data
+        gen_match = re.search(r'gen\s*(\d+)', source, re.IGNORECASE)
+        default_gen = gen_match.group(1) if gen_match else '1'
+        
+        for _, row in df.iterrows():
             try:
-                # Get required fields
-                name = self._get_column_value(row, self.MONSTER_COLUMNS['name'])
-                element = self._get_column_value(row, self.MONSTER_COLUMNS['element'])
-                description = self._get_column_value(row, self.MONSTER_COLUMNS['description'])
-                monster_id = self._get_column_value(row, self.MONSTER_COLUMNS['id'])
+                # Get generation from row or filename
+                gen = str(row.get(self._map_column('generation', row)) or default_gen)
                 
-                if not name:
-                    logger.warning(f"Skipping monster in {source} row {idx}: Missing name")
-                    continue
-                
-                # Create metadata dictionary
-                metadata = {
-                    'height': self._get_column_value(row, self.MONSTER_COLUMNS['height']),
-                    'weight': self._get_column_value(row, self.MONSTER_COLUMNS['weight'])
-                }
-                
-                # Remove None values from metadata
-                metadata = {k: v for k, v in metadata.items() if v}
-                
-                # Create entity
+                # Create entity with generation metadata
                 entity = LoreEntity(
-                    id=monster_id if monster_id else f"monster_{idx}",
-                    name=name,
-                    entity_type="Monster",
-                    element=element if element else None,
-                    description=description if description else f"A {element} type monster",
-                    metadata=metadata,
+                    id=f"{gen}_{row[self._map_column('id', row)]}",
+                    name=row[self._map_column('name', row)],
+                    entity_type="Hatchy",
+                    element=row[self._map_column('element', row)].lower(),
+                    description=row[self._map_column('description', row)],
+                    metadata={
+                        'generation': gen,
+                        'source': source,
+                        'height': self._get_column_value(row, self.MONSTER_COLUMNS['height']),
+                        'weight': self._get_column_value(row, self.MONSTER_COLUMNS['weight'])
+                    },
                     sources=[source]
                 )
-                
                 entities.append(entity)
-                logger.debug(f"Added monster: {name} ({monster_id})")
             except Exception as e:
-                logger.error(f"Error processing monster in {source} row {idx}: {str(e)}", exc_info=True)
+                logger.error(f"Error processing monster row: {str(e)}")
                 continue
-        
         return entities
         
     def _process_items(self, df: pd.DataFrame, source: str) -> List[LoreEntity]:
