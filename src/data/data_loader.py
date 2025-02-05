@@ -12,6 +12,13 @@ logger = logging.getLogger(__name__)
 class DataLoader:
     """Handles loading and processing of Hatchyverse data files."""
     
+    # Filename pattern detection
+    FILENAME_PATTERNS = {
+        'generation': r'(gen(?:eration)?[\s\-_]*(\d+))',
+        'type': r'(monster|item|story|world)',
+        'category': r'(fire|water|earth|air|void|abyssal)'
+    }
+    
     # Column name mappings for different file formats
     MONSTER_COLUMNS = {
         'name': ['Name', 'name', 'monster_name'],
@@ -44,6 +51,47 @@ class DataLoader:
         self.story_data = {}
         self.world_data = {}
         
+    def _extract_filename_metadata(self, filename: str) -> dict:
+        """Extract metadata patterns from filenames."""
+        metadata = {}
+        
+        # Generation detection with multiple patterns
+        gen_match = re.search(
+            self.FILENAME_PATTERNS['generation'], 
+            filename, 
+            re.IGNORECASE
+        )
+        if gen_match:
+            metadata['generation'] = gen_match.group(2)
+            metadata['generation_source'] = 'filename'
+            
+        # Cross-file relationships
+        if 'gen' in filename.lower():
+            metadata['is_generation_file'] = True
+            metadata['file_group'] = 'primary'
+        elif 'supplement' in filename.lower():
+            metadata['file_group'] = 'supplemental'
+            
+        # Type detection
+        type_match = re.search(
+            self.FILENAME_PATTERNS['type'],
+            filename,
+            re.IGNORECASE
+        )
+        if type_match:
+            metadata['content_type'] = type_match.group(1).lower()
+            
+        # Category/element detection
+        category_match = re.search(
+            self.FILENAME_PATTERNS['category'],
+            filename,
+            re.IGNORECASE
+        )
+        if category_match:
+            metadata['category'] = category_match.group(1).lower()
+            
+        return metadata
+        
     def _get_column_value(self, row: pd.Series, column_mappings: List[str], default: str = '') -> str:
         """Helper to get column value using multiple possible names."""
         for col in column_mappings:
@@ -64,19 +112,19 @@ class DataLoader:
         return True
         
     def _process_monsters(self, df: pd.DataFrame, source: str) -> List[LoreEntity]:
-        """Process monster data with generation tracking."""
+        """Process monster data with enhanced generation tracking."""
         entities = []
         
-        # Extract generation from filename if not in data
-        gen_match = re.search(r'gen\s*(\d+)', source, re.IGNORECASE)
-        default_gen = gen_match.group(1) if gen_match else '1'
+        # Extract metadata from filename
+        filename_meta = self._extract_filename_metadata(os.path.basename(source))
+        default_gen = filename_meta.get('generation', '1')
         
         for _, row in df.iterrows():
             try:
-                # Get generation from row or filename
+                # Get generation from row or filename metadata
                 gen = str(row.get(self._map_column('generation', row)) or default_gen)
                 
-                # Create entity with generation metadata
+                # Create entity with enhanced metadata
                 entity = LoreEntity(
                     id=f"{gen}_{row[self._map_column('id', row)]}",
                     name=row[self._map_column('name', row)],
@@ -85,16 +133,30 @@ class DataLoader:
                     description=row[self._map_column('description', row)],
                     metadata={
                         'generation': gen,
+                        'generation_source': filename_meta.get('generation_source', 'data'),
                         'source': source,
+                        'file_group': filename_meta.get('file_group', 'primary'),
                         'height': self._get_column_value(row, self.MONSTER_COLUMNS['height']),
                         'weight': self._get_column_value(row, self.MONSTER_COLUMNS['weight'])
                     },
                     sources=[source]
                 )
+                
+                # Add cross-file relationships if this is a supplemental file
+                if filename_meta.get('file_group') == 'supplemental':
+                    entity.add_relationship(
+                        target_id=f"gen_{gen}",
+                        rel_type="supplements_generation",
+                        strength=0.9
+                    )
+                
                 entities.append(entity)
+                logger.debug(f"Processed Hatchy: {entity.name} (Gen {gen})")
+                
             except Exception as e:
                 logger.error(f"Error processing monster row: {str(e)}")
                 continue
+                
         return entities
         
     def _process_items(self, df: pd.DataFrame, source: str) -> List[LoreEntity]:

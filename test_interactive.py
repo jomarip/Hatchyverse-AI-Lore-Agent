@@ -1,15 +1,19 @@
 import logging
 from pathlib import Path
 from dotenv import load_dotenv
-from src.data.data_loader import DataLoader
-from src.models.lore_validator import LoreValidator
-from src.models.chatbot import LoreChatbot
 from langchain_openai import OpenAIEmbeddings
 import os
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_core.language_models import BaseLLM
+from langchain_community.chat_models import ChatOpenAI
+from src.models.knowledge_graph import HatchyKnowledgeGraph
+from src.models.enhanced_loader import EnhancedDataLoader
+from src.models.enhanced_chatbot import EnhancedChatbot
+from src.models.contextual_retriever import ContextualRetriever
+from langchain_community.vectorstores import Chroma
 
 # Configure logging
-logging.basicConfig(level=logging.DEBUG)  # Changed to DEBUG level
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 class InteractiveTest:
@@ -25,107 +29,93 @@ class InteractiveTest:
             raise ValueError(f"Data directory not found: {self.data_dir.absolute()}")
         logger.debug(f"Data directory found: {self.data_dir.absolute()}")
         
-        # Initialize embeddings and validator
-        embeddings = OpenAIEmbeddings(
+        # Initialize embeddings
+        self.embeddings = OpenAIEmbeddings(
             model=os.getenv('OPENAI_EMBEDDING_MODEL', 'text-embedding-3-small')
         )
         logger.debug(f"Initialized embeddings with model: {os.getenv('OPENAI_EMBEDDING_MODEL', 'text-embedding-3-small')}")
-        self.validator = LoreValidator(embeddings)
         
-        # Initialize chatbot first
-        logger.info("Initializing chatbot...")
-        self.chatbot = LoreChatbot(
-            data_store={
-                'hatchy': [],
-                'items': [],
-                'stories': [],
-                'world_info': []
-            },
-            validator=self.validator
+        # Initialize LLM
+        self.llm = ChatOpenAI(
+            model_name=os.getenv('OPENAI_MODEL_NAME', 'gpt-4-0125-preview'),
+            temperature=0.7
         )
         
-        # Load data using new approach
+        # Initialize knowledge graph
+        self.knowledge_graph = HatchyKnowledgeGraph()
+        
+        # Initialize vector store
+        self.vector_store = Chroma(
+            persist_directory=os.getenv('VECTOR_STORE_PATH', './data/vector_store'),
+            embedding_function=self.embeddings
+        )
+        
+        # Initialize chatbot
+        self.chatbot = EnhancedChatbot(
+            llm=self.llm,
+            knowledge_graph=self.knowledge_graph,
+            vector_store=self.vector_store
+        )
+        
+        # Load data
         logger.info("Loading data...")
         self._load_all_data()
         
         logger.info("Test environment initialized")
         
     def _load_all_data(self):
-        """Load all data using the new data loading approach."""
+        """Load all data using the enhanced loader."""
         try:
-            # Load Gen1 Hatchy
+            loader = EnhancedDataLoader(self.knowledge_graph)
+            
+            # Load monster data
             gen1_path = self.data_dir / "Hatchy - Monster Data - gen 1.csv"
             if gen1_path.exists():
-                self.chatbot.load_data(str(gen1_path), "hatchy")
-                logger.info(f"Loaded Gen1 hatchy data: {len(self.chatbot.data_store['hatchy'])} entries")
+                loader.load_csv_data(
+                    str(gen1_path),
+                    entity_type="monster",
+                    relationship_mapping={
+                        "evolves_from": "evolution_source",
+                        "habitat": "lives_in"
+                    }
+                )
+                logger.info("Loaded Gen1 Hatchy data")
             
-            # Load Gen2 Hatchy
             gen2_path = self.data_dir / "Hatchy - Monster Data - gen 2.csv"
             if gen2_path.exists():
-                self.chatbot.load_data(str(gen2_path), "hatchy")
-                logger.info(f"Updated hatchy data: {len(self.chatbot.data_store['hatchy'])} total entries")
+                loader.load_csv_data(
+                    str(gen2_path),
+                    entity_type="monster",
+                    relationship_mapping={
+                        "evolves_from": "evolution_source",
+                        "habitat": "lives_in"
+                    }
+                )
+                logger.info("Loaded Gen2 Hatchy data")
             
-            # Load Items
-            items_paths = [
-                "PFP-hatchyverse - Masters data - 2.EQUIP Info.csv",
-                "PFP-hatchyverse - Masters data - masters-items-db.csv"
-            ]
-            for item_file in items_paths:
-                item_path = self.data_dir / item_file
-                if item_path.exists():
-                    self.chatbot.load_data(str(item_path), "items")
-                    logger.info(f"Loaded items from {item_file}: {len(self.chatbot.data_store['items'])} total items")
+            # Load world data
+            world_path = self.data_dir / "Hatchy World _ world design.txt"
+            if world_path.exists():
+                loader.load_text_data(str(world_path))
+                logger.info("Loaded world design data")
             
-            # Load Story Data with enhanced processing
+            # Load story data
             story_path = self.data_dir / "Hatchy World Comic_ Chaos saga.txt"
             if story_path.exists():
-                text_splitter = RecursiveCharacterTextSplitter(
-                    chunk_size=1000,
-                    chunk_overlap=200,
-                    separators=["\n\n", "\n", "• ", "Ep ", "Arc "]
-                )
-                
-                with open(story_path, 'r', encoding='utf-8') as f:
-                    raw_text = f.read()
-                    chunks = text_splitter.create_documents([raw_text], metadatas=[{
-                        "source": "chaos_saga",
-                        "section_type": "story",
-                        "title": "Chaos Saga"
-                    }])
-                    
-                    story_data = {
-                        "title": "Chaos Saga",
-                        "content": raw_text,
-                        "chunks": chunks,
-                        "metadata": {
-                            "source": "chaos_saga",
-                            "type": "story"
-                        }
-                    }
-                    self.chatbot.data_store['stories'].append(story_data)
-                    self.validator.vector_store.add_documents(chunks)
-                    logger.info(f"Loaded Chaos saga story data with {len(chunks)} chunks")
+                loader.load_text_data(str(story_path))
+                logger.info("Loaded Chaos saga data")
             
-            # Load World Design Data
-            world_files = [
-                "Hatchy World _ world design.txt",
-                "Hatchyverse Eco Presentation v3.txt"
-            ]
-            for world_file in world_files:
-                world_path = self.data_dir / world_file
-                if world_path.exists():
-                    with open(world_path, 'r', encoding='utf-8') as f:
-                        world_data = {"title": world_file, "content": f.read()}
-                        self.chatbot.data_store['world_info'].append(world_data)
-                    logger.info(f"Loaded world design data from {world_file}")
+            # Load eco presentation data
+            eco_path = self.data_dir / "Hatchyverse Eco Presentation v3.txt"
+            if eco_path.exists():
+                loader.load_text_data(str(eco_path))
+                logger.info("Loaded eco presentation data")
             
-            # Log data store statistics
-            logger.info("\nData Store Statistics:")
-            for data_type, data in self.chatbot.data_store.items():
-                logger.info(f"- {data_type}: {len(data)} entries")
-                if data and hasattr(self.chatbot.data_schema, 'get'):
-                    schema = self.chatbot.data_schema.get(data_type, {})
-                    logger.info(f"  Schema: {schema}")
+            # Log knowledge graph statistics
+            stats = self.knowledge_graph.get_statistics()
+            logger.info("\nKnowledge Graph Statistics:")
+            for key, value in stats.items():
+                logger.info(f"- {key}: {value}")
             
         except Exception as e:
             logger.error(f"Error loading data: {str(e)}", exc_info=True)
@@ -135,168 +125,87 @@ class InteractiveTest:
         """Test and display loaded data."""
         print("\n=== Data Loading Test ===")
         
-        for data_type, data in self.chatbot.data_store.items():
-            print(f"\n{data_type.title()} Data:")
-            print(f"- Total entries: {len(data)}")
-            
-            if data:
-                print("- Sample entry:")
-                sample = data[0]
-                if isinstance(sample, dict):
-                    for key, value in sample.items():
-                        if value:  # Only show non-empty values
-                            print(f"  {key}: {value}")
-                else:
-                    print(f"  {sample}")
-                
-                if data_type in self.chatbot.data_schema:
-                    print(f"- Schema:")
-                    for field, field_type in self.chatbot.data_schema[data_type].items():
-                        print(f"  {field}: {field_type}")
+        # Get knowledge graph statistics
+        stats = self.knowledge_graph.get_statistics()
+        print("\nKnowledge Graph Statistics:")
+        for key, value in stats.items():
+            print(f"- {key}: {value}")
+        
+        # Test entity retrieval
+        print("\nSample Entities by Type:")
+        entity_types = self.knowledge_graph.get_entity_types()
+        for entity_type in entity_types:
+            entities = self.knowledge_graph.search_entities("", entity_type=entity_type, limit=3)
+            print(f"\n{entity_type.title()} Entities:")
+            for entity in entities:
+                print(f"- {entity['name']}")
+                if 'description' in entity:
+                    print(f"  Description: {entity['description'][:100]}...")
+        
+        # Test relationship types
+        print("\nAvailable Relationship Types:")
+        rel_types = self.knowledge_graph.get_relationship_types()
+        for rel_type in rel_types:
+            print(f"- {rel_type}")
     
-    def analyze_story(self, story_text: str):
-        """Analyze a story submission for narrative structure and lore consistency."""
-        try:
-            logger.debug(f"Analyzing story text: {story_text[:100]}...")
-            
-            # Get narrative analysis
-            analysis = self.chatbot.analyze_story_submission(story_text)
-            
-            print("\nNarrative Analysis Results:")
-            print("===========================")
-            
-            # Print story elements
-            if "story_elements" in analysis["narrative_structure"]:
-                elements = analysis["narrative_structure"]["story_elements"]
-                
-                # Characters
-                if elements["characters"]:
-                    print("\nCharacters:")
-                    for char in elements["characters"]:
-                        print(f"- {char['name']} ({char['role']})")
-                        print(f"  Mentions: {char['mentions']}")
-                
-                # Settings
-                if elements["settings"]:
-                    print("\nSettings:")
-                    for setting in elements["settings"]:
-                        print(f"- {setting['name']} ({setting['type']})")
-                        if setting["attributes"]["atmosphere"]:
-                            print(f"  Atmosphere: {', '.join(setting['attributes']['atmosphere'])}")
-                        if setting["attributes"]["elements"]:
-                            print(f"  Elements: {', '.join(setting['attributes']['elements'])}")
-                
-                # Plot Points
-                if elements["plot_points"]:
-                    print("\nMajor Plot Points:")
-                    for point in elements["plot_points"]:
-                        print(f"- Type: {point['type']}")
-                        print(f"  Significance: {', '.join(point['significance'])}")
-                
-                # Themes
-                if elements["themes"]:
-                    print("\nThemes:")
-                    for theme in elements["themes"]:
-                        print(f"- {theme['name']} (mentioned {theme['frequency']} times)")
-            
-            # Print arc analysis
-            if "arc_analysis" in analysis["narrative_structure"]:
-                arc = analysis["narrative_structure"]["arc_analysis"]
-                print("\nStory Arc Analysis:")
-                print(f"Complete: {'Yes' if arc['completeness'] else 'No'}")
-                if not arc['completeness']:
-                    print(f"Missing Elements: {', '.join(arc['missing_elements'])}")
-                
-                print("\nStructure:")
-                for section in arc["structure"]:
-                    print(f"- {section['type'].title()}")
-            
-            # Print temporal analysis
-            if "temporal_markers" in analysis["narrative_structure"]:
-                markers = analysis["narrative_structure"]["temporal_markers"]
-                print("\nTemporal Analysis:")
-                for marker in markers:
-                    print(f"- {marker['marker']} ({marker['type']}, {marker['relative_position']})")
-            
-            # Print character relationships
-            if "character_relationships" in analysis["narrative_structure"]:
-                relationships = analysis["narrative_structure"]["character_relationships"]
-                if relationships:
-                    print("\nCharacter Relationships:")
-                    for rel in relationships:
-                        print(f"- {' & '.join(rel['characters'])}: {rel['interaction_type']}")
-            
-            # Print lore alignment
-            if "lore_alignment" in analysis:
-                alignment = analysis["lore_alignment"]
-                print("\nLore Alignment:")
-                print(f"Aligned: {'Yes' if alignment['is_aligned'] else 'No'}")
-                
-                if alignment["conflicts"]:
-                    print("\nConflicts:")
-                    for conflict in alignment["conflicts"]:
-                        print(f"- {conflict['type']}: {conflict['details']}")
-                
-                if alignment["enhancements"]:
-                    print("\nSuggested Enhancements:")
-                    for enhancement in alignment["enhancements"]:
-                        print(f"- {enhancement['suggestion']}")
-                        if "elements" in enhancement:
-                            print(f"  Elements to expand: {', '.join(enhancement['elements'])}")
-            
-            # Print validation summary
-            if "validation_summary" in analysis["narrative_structure"]:
-                validation = analysis["narrative_structure"]["validation_summary"]
-                print("\nValidation Summary:")
-                print(f"Coherent: {'Yes' if validation['is_coherent'] else 'No'}")
-                
-                if validation["issues"]:
-                    print("\nIssues:")
-                    for issue in validation["issues"]:
-                        print(f"- {issue}")
-                
-                if validation["strengths"]:
-                    print("\nStrengths:")
-                    for strength in validation["strengths"]:
-                        print(f"- {strength}")
-            
-        except Exception as e:
-            logger.error(f"Error analyzing story: {str(e)}", exc_info=True)
-            print(f"Error occurred during analysis: {str(e)}")
-
+    def test_generation_query(self):
+        """Test querying Hatchy by generation."""
+        print("\n=== Generation Query Test ===")
+        
+        for gen in ["1", "2", "3"]:
+            entities = self.knowledge_graph.get_entities_by_generation(gen)
+            print(f"\nGeneration {gen} Hatchy:")
+            for entity in entities[:5]:  # Show first 5
+                print(f"- {entity['name']}")
+    
+    def test_element_query(self):
+        """Test querying Hatchy by element."""
+        print("\n=== Element Query Test ===")
+        
+        elements = ["Fire", "Water", "Plant", "Dark", "Light", "Void"]
+        for element in elements:
+            results = self.chatbot.generate_response(f"Tell me about {element} type Hatchy")
+            print(f"\n{element} Type Hatchy:")
+            print(results["response"])
+    
+    def test_evolution_query(self):
+        """Test querying evolution information."""
+        print("\n=== Evolution Query Test ===")
+        
+        queries = [
+            "Which Hatchy can be ridden?",
+            "Tell me about final evolution stages",
+            "What are the largest Hatchy?"
+        ]
+        
+        for query in queries:
+            results = self.chatbot.generate_response(query)
+            print(f"\nQuery: {query}")
+            print(f"Response: {results['response']}")
+            if results.get("validation"):
+                print("Validation:", results["validation"])
+    
+    def test_world_query(self):
+        """Test querying world information."""
+        print("\n=== World Information Test ===")
+        
+        queries = [
+            "Tell me about Omniterra",
+            "What are the different regions in the Hatchy world?",
+            "What is the Crystal Lake region?"
+        ]
+        
+        for query in queries:
+            results = self.chatbot.generate_response(query)
+            print(f"\nQuery: {query}")
+            print(f"Response: {results['response']}")
+    
     def chat(self, message: str):
         """Chat with the Hatchyverse chatbot."""
         try:
             logger.debug(f"Processing chat message: {message}")
             
-            # Log data store status before query
-            logger.debug("Current data store status:")
-            for data_type, data in self.chatbot.data_store.items():
-                logger.debug(f"- {data_type}: {len(data)} entries")
-            
-            # Check if this looks like a story analysis request
-            # Look for story-like indicators in the message
-            story_indicators = [
-                "analyze this story",
-                "check this story",
-                "review this story",
-                "here's a story",
-                "validate this story",
-                "story analysis"
-            ]
-            
-            is_story_request = any(indicator in message.lower() for indicator in story_indicators)
-            
-            if is_story_request:
-                # Extract the actual story text - everything after the indicator
-                for indicator in story_indicators:
-                    if indicator in message.lower():
-                        story_text = message[message.lower().find(indicator) + len(indicator):].strip()
-                        if story_text:
-                            self.analyze_story(story_text)
-                            return
-            
-            # Regular chat response if not a story analysis
+            # Generate response
             response = self.chatbot.generate_response(message)
             
             print("\nChatbot Response:")
@@ -304,12 +213,17 @@ class InteractiveTest:
             
             if response.get("validation"):
                 print("\nValidation Results:")
-                if response["validation"]["conflicts"]:
-                    print("⚠️ Conflicts detected:")
-                    for conflict in response["validation"]["conflicts"]:
-                        print(f"- {conflict['reason']}")
+                if not response["validation"]["is_valid"]:
+                    print("⚠️ Issues detected:")
+                    for issue in response["validation"]["issues"]:
+                        print(f"- {issue}")
                 else:
-                    print("✅ No conflicts detected")
+                    print("✅ Response validated")
+                
+                if response["validation"]["enhancements"]:
+                    print("\nSuggested Enhancements:")
+                    for enhancement in response["validation"]["enhancements"]:
+                        print(f"- {enhancement['suggestion']}")
             
         except Exception as e:
             logger.error(f"Error during chat: {e}", exc_info=True)
@@ -320,11 +234,13 @@ class InteractiveTest:
         print("\nWelcome to Hatchyverse Interactive Testing!")
         print("Available commands:")
         print("1. 'data' - Test data loading")
-        print("2. 'chat <message>' - Chat with the Hatchyverse chatbot")
-        print("   - For story analysis, include phrases like 'analyze this story' or 'check this story'")
-        print("3. 'exit' - Exit testing session")
+        print("2. 'gen' - Test generation queries")
+        print("3. 'element' - Test element queries")
+        print("4. 'evolution' - Test evolution queries")
+        print("5. 'world' - Test world information")
+        print("6. 'chat <message>' - Chat with the Hatchyverse chatbot")
+        print("7. 'exit' - Exit testing session")
         
-        chat_history = []
         while True:
             try:
                 command = input("\nEnter command: ").strip()
@@ -334,11 +250,19 @@ class InteractiveTest:
                     break
                 elif command.lower() == 'data':
                     self.test_data_loading()
+                elif command.lower() == 'gen':
+                    self.test_generation_query()
+                elif command.lower() == 'element':
+                    self.test_element_query()
+                elif command.lower() == 'evolution':
+                    self.test_evolution_query()
+                elif command.lower() == 'world':
+                    self.test_world_query()
                 elif command.lower().startswith('chat '):
                     message = command[5:].strip()
                     self.chat(message)
                 else:
-                    print("Unknown command. Try 'data', 'chat <message>', or 'exit'")
+                    print("Unknown command. Try 'data', 'gen', 'element', 'evolution', 'world', 'chat <message>', or 'exit'")
             
             except Exception as e:
                 logger.error(f"Error during testing: {e}", exc_info=True)

@@ -30,6 +30,14 @@ Our platform transforms traditional fan wikis into dynamic, AI-powered narrative
 - **Conflict Detection**: Identifies potential contradictions with existing lore
 - **Constructive Feedback**: Provides suggestions for improving submissions
 
+- **Enhanced Knowledge Graph**: Flexible graph structure for storing entities and their relationships
+- **Smart Context Retrieval**: Combines vector search and graph traversal for relevant information
+- **Multi-Format Data Loading**: Support for CSV, JSON, and text files with relationship extraction
+- **Relationship Analysis**: Tools for analyzing connections between entities
+- **Timeline Generation**: Create event timelines for entities
+- **Network Visualization**: Generate entity relationship networks
+- **Validation System**: Ensures response consistency with knowledge graph
+
 ### Data Management
 - Load and manage monster data across multiple generations
 - Support for items, equipment, and world design data
@@ -41,33 +49,33 @@ Our platform transforms traditional fan wikis into dynamic, AI-powered narrative
 
 ```
 hatchyverse/
-├── data/                    # Data files
-│   ├── Hatchy - Monster Data - gen 1.csv
-│   ├── Hatchy - Monster Data - gen 2.csv
-│   ├── PFP-hatchyverse - Masters data/
-│   └── Hatchy World _ world design.txt
-├── models/                  # Core data models
-│   ├── __init__.py
-│   ├── monster.py          # Monster class definition
-│   ├── data_loader.py      # Data loading functionality
-│   ├── lore_entity.py      # Base model for all lore elements
-│   └── lore_validator.py   # Lore validation logic
-├── api/                    # API endpoints
-│   └── main.py            # FastAPI routes
-├── tests/                  # Test files
-│   ├── __init__.py
-│   └── test_monster_loader.py
-├── requirements.txt        # Project dependencies
-└── README.md              # This file
+├── src/
+│   ├── models/
+│   │   ├── enhanced_chatbot.py      # Main chatbot implementation
+│   │   ├── knowledge_graph.py       # Knowledge graph management
+│   │   ├── contextual_retriever.py  # Context retrieval system
+│   │   └── enhanced_loader.py       # Data loading and processing
+│   ├── api/                         # API endpoints
+│   ├── utils/                       # Utility functions
+│   └── config/                      # Configuration files
+├── data/                           # Data files
+├── tests/                          # Test cases
+├── requirements.txt                # Project dependencies
+└── README.md                       # This file
 ```
 
 ## Setup and Configuration
 
-1. **Environment Setup**
+1. Create a virtual environment:
+   ```bash
+   python -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   ```
 
-# Install dependencies
-pip install -r requirements.txt
-```
+2. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
 2. **Configuration**
 Create a `.env` file with:
@@ -102,86 +110,241 @@ Place your data files in the `data` directory:
 uvicorn src.api.main:app --reload
 ```
 
-## Usage
-
-### Basic Data Access
-```python
-from models import DataLoader, Element
-
-# Create a data loader instance
-loader = DataLoader()
-
-# Load monster data
-loader.load_gen1_monsters()
-loader.load_gen2_monsters()
-
-# Get a specific monster by ID
-celestion = loader.get_monster_by_id(0)
-print(celestion)  # Celestion (Void) - ID: 0
-
-# Get all monsters of a specific element
-plant_monsters = loader.get_monsters_by_element(Element.PLANT)
-for monster in plant_monsters:
-    print(monster.name)
-```
-
-### Lore Exploration API
-```python
-from api.main import lore_chatbot
-
-# Ask questions about the lore
-response = lore_chatbot.ask("Tell me about water-type Hatchies")
-
-# Submit new lore for validation
-submission = {
-    "name": "Frostflame",
-    "entity_type": "Monster",
-    "element": "Ice",
-    "description": "A rare Hatchy that can control both ice and fire."
-}
-validation_result = lore_chatbot.validate_submission(submission)
-```
-
-### API Endpoints
-
-- **/chat**: Handle general lore queries
-  - POST: Accept user messages
-  - Returns: AI response with relevant lore
-
-- **/submit**: Process new lore submissions
-  - POST: Accept structured lore entries
-  - Returns: Validation results and feedback
-
-- **/health**: System health monitoring
-  - GET: Check system status
-  - Returns: Component health information
-
-## Data Models
-
-### LoreEntity Structure
-```python
-{
-    "id": "monster_001",
-    "name": "Aquafrost",
-    "entity_type": "Monster",
-    "element": "Water",
-    "description": "A rare water-type Hatchy with ice abilities",
-    "relationships": {
-        "evolves_from": ["basic_water_hatchy"],
-        "habitat": ["frozen_lakes"]
-    },
-    "metadata": {
-        "rarity": "Rare",
-        "evolution_level": "2"
-    }
-}
-```
-
 ## Testing
 
-Run the tests using pytest:
+The project includes a comprehensive test suite with multiple testing approaches:
+
+### 1. Unit Tests
+Run the unit test suite:
 ```bash
-pytest tests/
+python3 -m pytest tests/test_components.py
+```
+
+The `test_components.py` file contains core unit tests that verify the functionality of key system components:
+
+#### 1. Knowledge Graph Tests
+- **test_knowledge_graph_basic**: Tests fundamental knowledge graph operations
+  - Entity creation and retrieval
+  - Relationship creation and validation
+  - Entity type management
+  - Basic search functionality
+
+#### 2. Data Loading Tests
+- **test_enhanced_loader**: Verifies the data loading system
+  - Entity creation with attributes
+  - Relationship mapping
+  - Automatic target entity creation
+  - Data validation and error handling
+
+#### 3. Contextual Retrieval Tests
+- **test_contextual_retriever**: Tests the context retrieval system
+  - Entity-based context extraction
+  - Query-based information retrieval
+  - Context relevance verification
+  - Integration with vector store
+
+#### 4. Chatbot Tests
+- **test_enhanced_chatbot**: Validates the chatbot functionality
+  - Response generation
+  - Context integration
+  - Response validation
+  - Error handling
+
+#### 5. Query Tests
+
+Run the retrieval system tests:
+```bash
+python3 run_tests.py
+```
+- **test_generation_query**: Tests generation-based entity queries
+  - Filtering by generation
+  - Generation metadata handling
+  - Cache utilization
+
+- **test_element_query**: Validates element-based filtering
+  - Element type filtering
+  - Attribute-based search
+  - Filter combination handling
+
+#### 6. Relationship Tests
+- **test_relationship_query**: Tests relationship management
+  - Relationship creation
+  - Relationship type validation
+  - Bidirectional relationship handling
+  - Relationship attribute management
+
+#### 7. Error Handling Tests
+- **test_error_handling**: Verifies system robustness
+  - Invalid entity handling
+  - Missing relationship handling
+  - Invalid query responses
+  - Error message validation
+
+### Test Setup and Configuration
+
+The test suite uses a controlled test environment with:
+
+1. **Test Data**:
+   ```python
+   test_monster_data = {
+       "name": "TestHatchy",
+       "generation": "1",
+       "element": "Fire",
+       "evolves_from": "None",
+       "habitat": "Volcano",
+       "description": "A test Hatchy for unit testing"
+   }
+   ```
+
+2. **Location Data**:
+   ```python
+   volcano_data = {
+       "name": "Volcano",
+       "type": "location",
+       "description": "A volcanic habitat",
+       "attributes": {
+           "temperature": "hot",
+           "terrain": "volcanic"
+       }
+   }
+   ```
+
+3. **Component Initialization**:
+   - OpenAI embeddings for vector search
+   - ChatGPT for response generation
+   - Chroma vector store for similarity search
+   - Knowledge graph for entity relationships
+   - Enhanced chatbot for query handling
+Interactive test features:
+- Data loading verification
+- Generation-based queries
+- Element-based queries
+- Evolution relationship testing
+- World information queries
+- Live chat testing
+
+Available commands:
+1. `data` - Test data loading
+2. `gen` - Test generation queries
+3. `element` - Test element queries
+4. `evolution` - Test evolution queries
+5. `world` - Test world information
+6. `chat <message>` - Chat with the Hatchyverse chatbot
+7. `exit` - Exit testing session
+
+### Running the Tests
+
+1. **Run All Component Tests**:
+   ```bash
+   python3 -m pytest tests/test_components.py -v
+   ```
+
+2. **Run Specific Test Categories**:
+   ```bash
+   # Run only knowledge graph tests
+   python3 -m pytest tests/test_components.py -k "knowledge_graph" -v
+   
+   # Run only chatbot tests
+   python3 -m pytest tests/test_components.py -k "chatbot" -v
+   ```
+
+3. **Generate Coverage Report**:
+   ```bash
+   pytest --cov=src --cov-report=term-missing tests/test_components.py
+   ```
+
+### Test Validation Criteria
+
+Each test category ensures:
+
+1. **Data Integrity**:
+   - Proper entity creation and storage
+   - Accurate relationship mapping
+   - Consistent attribute handling
+
+2. **Query Functionality**:
+   - Accurate search results
+   - Proper filter application
+   - Relevant context retrieval
+
+3. **Response Quality**:
+   - Valid response generation
+   - Proper context integration
+   - Accurate validation results
+
+4. **Error Handling**:
+   - Graceful error management
+   - Informative error messages
+   - System stability under invalid inputs
+
+## Usage
+
+1. Initialize the knowledge graph:
+   ```python
+   from src.models.knowledge_graph import HatchyKnowledgeGraph
+   from src.models.enhanced_loader import EnhancedDataLoader
+   
+   # Create knowledge graph
+   graph = HatchyKnowledgeGraph()
+   
+   # Initialize loader
+   loader = EnhancedDataLoader(graph)
+   
+   # Load data
+   loader.load_directory('data/')
+   ```
+
+2. Use the chatbot:
+   ```python
+   from src.models.enhanced_chatbot import EnhancedChatbot
+   from langchain_core.language_models import BaseLLM
+   
+   # Initialize chatbot
+   chatbot = EnhancedChatbot(
+       llm=your_llm,
+       knowledge_graph=graph,
+       vector_store=your_vector_store
+   )
+   
+   # Generate response
+   response = chatbot.generate_response("Tell me about the first generation Hatchies")
+   ```
+
+## Data Loading
+
+The system supports multiple data formats:
+
+### CSV Files
+```python
+loader.load_csv_data(
+    'data/entities.csv',
+    entity_type='monster',
+    relationship_mapping={
+        'evolves_from': 'evolution_source',
+        'habitat': 'lives_in'
+    }
+)
+```
+
+### JSON Files
+```python
+loader.load_json_data(
+    'data/lore.json',
+    entity_mapping={
+        'name': 'title',
+        'description': 'content',
+        'type': 'category'
+    }
+)
+```
+
+### Text Files
+```python
+loader.load_text_data(
+    'data/story.txt',
+    chunk_size=1000,
+    overlap=200
+)
 ```
 
 ## Validation Process
