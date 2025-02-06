@@ -81,51 +81,116 @@ class EnhancedDataLoader:
         self.knowledge_graph = knowledge_graph
         self.logger = logging.getLogger(__name__)
         
+    def _convert_numeric(self, value: Any, field: str) -> Optional[float]:
+        """Convert numeric values safely."""
+        try:
+            if pd.isna(value) or value is None or value == '':
+                return None
+            # Handle percentage values
+            if isinstance(value, str):
+                if '%' in value:
+                    # Convert percentage to decimal
+                    return float(value.strip('%')) / 100
+                # Handle fractions like '107/0'
+                if '/' in value:
+                    num, denom = value.split('/')
+                    if float(denom) == 0:
+                        return None
+                    return float(num) / float(denom)
+                # Handle text values that can't be converted
+                if not value.replace('.', '').replace('-', '').isdigit():
+                    return None
+            return float(value) if value is not None else None
+        except (ValueError, TypeError, ZeroDivisionError):
+            logger.warning(f"Could not convert {field} value {value} to number")
+            return None
+
+    def _convert_string(self, value: Any) -> Optional[str]:
+        """Convert values to strings safely."""
+        try:
+            if pd.isna(value) or value is None or value == '':
+                return None
+            # Convert float/int to string without decimal places if possible
+            if isinstance(value, (float, int)):
+                if float(value).is_integer():
+                    return str(int(value))
+                return str(value)
+            # Handle special string cases
+            if isinstance(value, str):
+                # Clean up the string
+                cleaned = value.strip()
+                if not cleaned:
+                    return None
+                if cleaned.lower() in ['nan', 'none', 'null']:
+                    return None
+                return cleaned
+            return str(value)
+        except (ValueError, TypeError):
+            logger.warning(f"Could not convert value {value} to string")
+            return None
+
     def load_csv_data(self, file_path: str, entity_type: str, relationship_mapping: Optional[Dict[str, str]] = None):
         """Load entity data from CSV with relationship extraction."""
         try:
             df = pd.read_csv(file_path)
             loaded_count = 0
             
+            # Clean up problematic column names
+            df.columns = [col.strip() for col in df.columns]
+            
+            # Remove problematic columns that contain ratios or fractions
+            columns_to_drop = []
+            for col in df.columns:
+                if '/' in col or col.startswith('Unnamed:'):
+                    columns_to_drop.append(col)
+            if columns_to_drop:
+                df = df.drop(columns=columns_to_drop)
+            
             for _, row in df.iterrows():
                 try:
                     # Convert row to dict and extract core fields
                     data = row.to_dict()
-                    name = data.pop('name', f"Entity_{uuid.uuid4().hex[:8]}")
                     
-                    # Extract relationship fields
-                    relationship_data = {}
-                    if relationship_mapping:
-                        for source_field, rel_type in relationship_mapping.items():
-                            if source_field in data and pd.notna(data[source_field]):
-                                relationship_data[rel_type] = data.pop(source_field)
+                    # Clean up data keys
+                    data = {k.strip(): v for k, v in data.items() if isinstance(k, str)}
                     
-                    # Add entity with individual parameters
+                    # Convert numeric fields
+                    numeric_fields = ['Monster ID', 'monster_id', 'Height', 'Weight']
+                    for field in numeric_fields:
+                        if field in data:
+                            data[field] = self._convert_numeric(data[field], field)
+                    
+                    # Convert string fields
+                    string_fields = ['Name', 'name', 'Description', 'description', 'sound', 'Element', 'element', 'Image', 'image', 'egg']
+                    for field in string_fields:
+                        if field in data:
+                            data[field] = self._convert_string(data[field])
+                    
+                    # Clean up data by removing None values, empty strings, and problematic fields
+                    data = {
+                        k: v for k, v in data.items() 
+                        if v is not None and v != '' and '/' not in k and not k.startswith('Unnamed:')
+                    }
+                    
+                    # Add entity with converted data
                     entity_id = self.knowledge_graph.add_entity(
-                        name=name,
+                        name=data.get('name', data.get('Name', f"Entity_{uuid.uuid4().hex[:8]}")),
                         entity_type=entity_type,
                         attributes=data,
                         metadata={'source_file': file_path},
                         source=file_path
                     )
                     
-                    # Process relationships
-                    for rel_type, target_name in relationship_data.items():
-                        # Create target entity if it doesn't exist
-                        target_id = self._get_or_create_entity(target_name, entity_type)
-                        if target_id:
-                            self.knowledge_graph.add_relationship(entity_id, target_id, rel_type)
-                    
                     loaded_count += 1
                     
                 except Exception as e:
-                    self.logger.error(f"Error processing row: {str(e)}")
+                    logger.error(f"Error processing row: {str(e)}")
                     continue
                     
-            self.logger.info(f"Loaded {loaded_count} entities from {file_path}")
+            logger.info(f"Loaded {loaded_count} entities from {file_path}")
             
         except Exception as e:
-            self.logger.error(f"Error loading CSV file {file_path}: {str(e)}")
+            logger.error(f"Error loading CSV file {file_path}: {str(e)}")
             
     def load_text_data(self, file_path: str, chunk_size: int = 1000):
         """Load text data with chunking and entity extraction."""
@@ -136,20 +201,38 @@ class EnhancedDataLoader:
             # Split into chunks
             chunks = self._split_text(text, chunk_size)
             
+            # Create unique prefix for chunks from this file
+            file_prefix = Path(file_path).stem.replace(" ", "_")
+            chunk_count = 0
+            
             for i, chunk in enumerate(chunks):
                 try:
+                    # Create unique chunk name
+                    chunk_name = f"{file_prefix}_{uuid.uuid4().hex[:8]}"
+                    
                     # Create entity for chunk
                     self.knowledge_graph.add_entity(
-                        name=f"Chunk_{i}",
+                        name=chunk_name,
                         entity_type="text_chunk",
-                        attributes={'content': chunk, 'position': i},
+                        attributes={
+                            'content': chunk,
+                            'position': i,
+                            'source_file': file_path,
+                            'chunk_index': i
+                        },
+                        metadata={'source': file_path},
                         source=file_path
                     )
-                except Exception as e:
-                    self.logger.error(f"Error processing chunk {i}: {str(e)}")
+                    chunk_count += 1
                     
+                except Exception as e:
+                    logger.error(f"Error processing chunk {i}: {str(e)}")
+                    continue
+                    
+            logger.info(f"Loaded {chunk_count} chunks from {file_path}")
+            
         except Exception as e:
-            self.logger.error(f"Error loading text file {file_path}: {str(e)}")
+            logger.error(f"Error loading text file {file_path}: {str(e)}")
             
     def _get_or_create_entity(self, name: str, entity_type: str) -> Optional[str]:
         """Get entity by name or create if it doesn't exist."""

@@ -15,6 +15,22 @@ class ResponseValidator:
     def __init__(self, knowledge_graph: HatchyKnowledgeGraph):
         self.knowledge_graph = knowledge_graph
     
+    def _extract_entity_mentions(self, text: str) -> List[Dict[str, Any]]:
+        """Extract entity mentions from text."""
+        mentions = []
+        text_lower = text.lower()
+        
+        for entity_id, entity in self.knowledge_graph.entities.items():
+            name = entity.get('name', '')
+            if name and name.lower() in text_lower:
+                mentions.append({
+                    'id': entity_id,
+                    'name': name,
+                    'attributes': entity.get('attributes', {})
+                })
+        
+        return mentions
+    
     def validate(self, response: str, context: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Validate response against knowledge graph."""
         validation_results = {
@@ -236,23 +252,6 @@ class EnhancedChatbot:
                 prompt_parts.append(entity['content'])
         
         return "\n".join(prompt_parts)
-    
-    def _extract_entity_mentions(self, text: str) -> List[Dict[str, Any]]:
-        """Extract entity mentions from text."""
-        # This is a placeholder - implement more sophisticated entity extraction
-        mentions = []
-        
-        # Get all entities from knowledge graph
-        for entity_id, entity in self.knowledge_graph.entities.items():
-            name = entity.get('name', '').lower()
-            if name and name in text.lower():
-                mentions.append({
-                    'id': entity_id,
-                    'name': entity['name'],
-                    'attributes': {}  # Add attribute extraction if needed
-                })
-        
-        return mentions
     
     def _find_unused_context(
         self,

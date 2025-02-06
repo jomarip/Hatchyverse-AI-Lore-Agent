@@ -81,22 +81,60 @@ class HatchyKnowledgeGraph:
         """Check data consistency before insertion."""
         issues = []
         
-        # Check for duplicate names
+        # Check for duplicate names - modified to be more lenient
         if entity_data['name'] in self._name_index:
-            issues.append(f"Entity with name '{entity_data['name']}' already exists")
+            # Instead of error, modify name to make unique
+            base_name = entity_data['name']
+            counter = 1
+            while f"{base_name}_{counter}" in self._name_index:
+                counter += 1
+            entity_data['name'] = f"{base_name}_{counter}"
         
-        # Check attribute types consistency
+        # Clean up attributes to remove problematic fields
+        if 'attributes' in entity_data:
+            entity_data['attributes'] = {
+                k: v for k, v in entity_data['attributes'].items()
+                if not (isinstance(k, str) and ('/' in k or k.startswith('Unnamed:')))
+            }
+        
+        # Check attribute types consistency with more flexible type conversion
         for attr, value in entity_data.get('attributes', {}).items():
+            # Skip None values and problematic fields
+            if value is None or (isinstance(attr, str) and ('/' in attr or attr.startswith('Unnamed:'))):
+                continue
+            
             # Get existing entities of same type
             similar_entities = self._type_index.get(entity_data['entity_type'], set())
             for entity_id in similar_entities:
                 entity = self.entities[entity_id]
-                if attr in entity['attributes']:
-                    if type(value) != type(entity['attributes'][attr]):
-                        issues.append(
-                            f"Attribute '{attr}' type mismatch: expected "
-                            f"{type(entity['attributes'][attr])}, got {type(value)}"
-                        )
+                if attr in entity['attributes'] and entity['attributes'][attr] is not None:
+                    existing_type = type(entity['attributes'][attr])
+                    new_type = type(value)
+                    
+                    # Skip numeric type comparisons if both are numeric
+                    if isinstance(value, (int, float)) and isinstance(entity['attributes'][attr], (int, float)):
+                        continue
+                    
+                    # Skip string comparisons for numeric strings
+                    if (existing_type == str and new_type == str and 
+                        (value.replace('.', '').isdigit() or entity['attributes'][attr].replace('.', '').isdigit())):
+                        continue
+                    
+                    # Try to convert between string and float if needed
+                    if existing_type != new_type:
+                        try:
+                            if existing_type == float and isinstance(value, str):
+                                float(value)  # Just test conversion
+                                continue
+                            elif existing_type == str and isinstance(value, (int, float)):
+                                str(value)  # Just test conversion
+                                continue
+                        except ValueError:
+                            # Only add type mismatch issue if conversion fails
+                            issues.append(
+                                f"Attribute '{attr}' type mismatch: expected "
+                                f"{existing_type}, got {new_type}"
+                            )
         
         return len(issues) == 0, issues
 

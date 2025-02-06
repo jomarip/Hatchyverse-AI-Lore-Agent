@@ -87,8 +87,14 @@ class ContextualRetriever:
     ) -> List[Dict[str, Any]]:
         """Get relevant context for a query."""
         try:
-            # First try direct entity search
-            entities = self.knowledge_graph.search_entities(
+            # Get context from vector store
+            vector_results = self.vector_store.similarity_search(
+                query,
+                k=self.max_results
+            )
+            
+            # Get context from knowledge graph
+            kg_entities = self.knowledge_graph.search_entities(
                 query,
                 filters=filters,
                 limit=self.max_results
@@ -98,12 +104,28 @@ class ContextualRetriever:
             seen_entities = set()
             
             # Get context for each entity found
-            for entity in entities:
+            for entity in kg_entities:
                 if entity['id'] not in seen_entities:
                     context = self.get_entity_context(entity['id'])
                     if context:
                         entity_contexts.append(context)
                         seen_entities.add(entity['id'])
+            
+            # Convert vector results to context format
+            for doc in vector_results:
+                if hasattr(doc, 'metadata') and 'entity_id' in doc.metadata:
+                    entity_id = doc.metadata['entity_id']
+                    if entity_id not in seen_entities:
+                        context = self.get_entity_context(entity_id)
+                        if context:
+                            entity_contexts.append(context)
+                            seen_entities.add(entity_id)
+                else:
+                    # Add as text context
+                    entity_contexts.append({
+                        'text_content': doc.page_content,
+                        'metadata': doc.metadata if hasattr(doc, 'metadata') else {}
+                    })
             
             return entity_contexts
             

@@ -1,6 +1,7 @@
 import uuid
 from typing import Dict, Any, Optional, List
 import logging
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +20,7 @@ class EnhancedDataLoader:
         """Load an entity into the knowledge graph with relationship mapping."""
         try:
             # Extract core entity attributes
-            name = entity_data.get('name', f"{entity_type}_{uuid.uuid4().hex[:8]}")
+            name = str(entity_data.get('name', f"{entity_type}_{uuid.uuid4().hex[:8]}"))
             
             # Separate relationship fields from attributes
             attributes = {}
@@ -28,17 +29,28 @@ class EnhancedDataLoader:
             for key, value in entity_data.items():
                 if relationship_mapping and key in relationship_mapping:
                     relationship_data[key] = value
-                elif key not in ['name', 'type', 'description']:  # Exclude special fields from attributes
-                    attributes[key] = value
+                elif key not in ['name', 'type', 'description']:
+                    # Handle numeric fields
+                    if key in ['Monster ID', 'monster_id', 'Height', 'Weight']:
+                        try:
+                            if pd.notna(value):
+                                attributes[key] = int(float(value))
+                        except (ValueError, TypeError):
+                            logger.warning(f"Could not convert {key} value {value} to integer")
+                            attributes[key] = None
+                    else:
+                        # Handle string fields
+                        if pd.notna(value):
+                            attributes[key] = str(value)
             
             # Add description to attributes if present
-            if 'description' in entity_data:
-                attributes['description'] = entity_data['description']
+            if 'description' in entity_data and pd.notna(entity_data['description']):
+                attributes['description'] = str(entity_data['description'])
             
             # Add entity to knowledge graph with individual parameters
             entity_id = self.knowledge_graph.add_entity(
                 name=name,
-                entity_type=entity_type,  # Use the provided entity_type parameter
+                entity_type=entity_type,
                 attributes=attributes,
                 metadata={'source': 'manual_entry'},
                 source='manual_entry'
@@ -51,7 +63,7 @@ class EnhancedDataLoader:
                     if source_field in relationship_data:
                         target_value = relationship_data[source_field]
                         # Skip empty or invalid targets
-                        if not target_value or str(target_value).lower() == "none":
+                        if not target_value or pd.isna(target_value) or str(target_value).lower() == "none":
                             continue
                         
                         # Create target entity if needed
@@ -76,12 +88,9 @@ class EnhancedDataLoader:
                         self.knowledge_graph.add_relationship(
                             entity_id,
                             target_id,
-                            rel_type,
-                            {'source_field': source_field}
+                            rel_type
                         )
-                        logger.debug(
-                            f"Added relationship {rel_type} from {name} to {target_name}"
-                        )
+                        logger.debug(f"Added relationship {rel_type} from {name} to {target_name}")
             
             logger.info(f"Successfully loaded entity: {name}")
             return entity_id
