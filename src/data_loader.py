@@ -28,18 +28,21 @@ class EnhancedDataLoader:
             for key, value in entity_data.items():
                 if relationship_mapping and key in relationship_mapping:
                     relationship_data[key] = value
-                elif key != 'name':  # Store everything except name in attributes
+                elif key not in ['name', 'type', 'description']:  # Exclude special fields from attributes
                     attributes[key] = value
             
-            # Add entity to knowledge graph
-            entity = {
-                'name': name,
-                'type': entity_type,
-                'attributes': attributes,
-                '_metadata': {'source': 'manual_entry'}
-            }
+            # Add description to attributes if present
+            if 'description' in entity_data:
+                attributes['description'] = entity_data['description']
             
-            entity_id = self.knowledge_graph.add_entity(entity, 'manual_entry')
+            # Add entity to knowledge graph with individual parameters
+            entity_id = self.knowledge_graph.add_entity(
+                name=name,
+                entity_type=entity_type,  # Use the provided entity_type parameter
+                attributes=attributes,
+                metadata={'source': 'manual_entry'},
+                source='manual_entry'
+            )
             logger.debug(f"Created entity {name} with ID {entity_id}")
             
             # Process relationships if mapping provided
@@ -58,15 +61,12 @@ class EnhancedDataLoader:
                         if not target_entity:
                             # Create target entity
                             target_type = self._infer_target_type(rel_type)
-                            target_entity = {
-                                'name': target_name,
-                                'type': target_type,
-                                'attributes': {'name': target_name},
-                                '_metadata': {'source': 'generated'}
-                            }
                             target_id = self.knowledge_graph.add_entity(
-                                target_entity,
-                                'generated'
+                                name=target_name,
+                                entity_type=target_type,
+                                attributes={'name': target_name},
+                                metadata={'source': 'generated'},
+                                source='generated'
                             )
                             logger.debug(f"Created target entity {target_name} with ID {target_id}")
                         else:

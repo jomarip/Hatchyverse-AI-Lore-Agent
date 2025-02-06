@@ -99,81 +99,36 @@ class ContextualRetriever:
             
             # Get context for each entity found
             for entity in entities:
-                if entity.get('id') in seen_entities:
-                    continue
-                    
-                context = self.knowledge_graph.get_entity_context(
-                    entity['id'],
-                    include_relationships=True,
-                    max_relationship_depth=self.max_relationship_depth
-                )
-                
-                if context:
-                    entity_contexts.append(context)
-                    seen_entities.add(entity['id'])
-            
-            # If no direct matches, try vector search
-            if not entity_contexts:
-                # Extract potential entity names from query
-                words = query.split()
-                potential_entities = []
-                for i in range(len(words)):
-                    for j in range(i + 1, len(words) + 1):
-                        name = " ".join(words[i:j])
-                        entity = self.knowledge_graph.get_entity_by_name(name)
-                        if entity:
-                            potential_entities.append(entity)
-                
-                # Get context for each potential entity
-                for entity in potential_entities:
-                    if entity.get('id') in seen_entities:
-                        continue
-                        
-                    context = self.knowledge_graph.get_entity_context(
-                        entity['id'],
-                        include_relationships=True,
-                        max_relationship_depth=self.max_relationship_depth
-                    )
-                    
+                if entity['id'] not in seen_entities:
+                    context = self.get_entity_context(entity['id'])
                     if context:
                         entity_contexts.append(context)
                         seen_entities.add(entity['id'])
-                
-                # If still no matches, try vector search
-                if not entity_contexts:
-                    docs = self.vector_store.similarity_search(
-                        query,
-                        k=self.max_results,
-                        filter=filters
-                    )
-                    
-                    # Extract entity mentions from documents
-                    for doc in docs:
-                        # Extract entity IDs from document metadata
-                        entity_ids = doc.metadata.get('entity_ids', [])
-                        if not entity_ids:
-                            continue
-                        
-                        # Get context for each entity
-                        for entity_id in entity_ids:
-                            if entity_id in seen_entities:
-                                continue
-                                
-                            context = self.knowledge_graph.get_entity_context(
-                                entity_id,
-                                include_relationships=True,
-                                max_relationship_depth=self.max_relationship_depth
-                            )
-                            
-                            if context:
-                                entity_contexts.append(context)
-                                seen_entities.add(entity_id)
             
             return entity_contexts
             
         except Exception as e:
-            logger.error(f"Error retrieving context: {str(e)}")
+            logger.error(f"Error getting context: {str(e)}")
             return []
+    
+    def get_entity_context(self, entity_id: str) -> Optional[Dict[str, Any]]:
+        """Get context for a specific entity."""
+        try:
+            entity = self.knowledge_graph.get_entity(entity_id)
+            if not entity:
+                return None
+            
+            context = {
+                'entity': entity,
+                'relationships': self.knowledge_graph.get_entity_relationships(entity_id),
+                'similar_entities': self._get_similar_entities(entity)
+            }
+            
+            return context
+            
+        except Exception as e:
+            logger.error(f"Error getting entity context: {str(e)}")
+            return None
     
     def get_filtered_context(
         self,
@@ -391,3 +346,35 @@ class ContextualRetriever:
                 )
                 
         return ". ".join(context) 
+
+    def _get_similar_entities(self, entity: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Get similar entities based on vector similarity."""
+        try:
+            # Create a query from entity attributes
+            query_parts = [
+                entity['name'],
+                entity.get('description', ''),
+                ' '.join(f"{k}: {v}" for k, v in entity.get('attributes', {}).items())
+            ]
+            query = ' '.join(query_parts)
+            
+            # Get similar documents from vector store
+            similar_docs = self.vector_store.similarity_search(
+                query,
+                k=self.max_results
+            )
+            
+            # Convert documents to entities
+            similar_entities = []
+            for doc in similar_docs:
+                entity_id = doc.metadata.get('entity_id')
+                if entity_id and entity_id != entity['id']:
+                    similar_entity = self.knowledge_graph.get_entity(entity_id)
+                    if similar_entity:
+                        similar_entities.append(similar_entity)
+            
+            return similar_entities
+            
+        except Exception as e:
+            logger.error(f"Error getting similar entities: {str(e)}")
+            return [] 

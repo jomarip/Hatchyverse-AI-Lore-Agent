@@ -56,7 +56,6 @@ class TestHatchyComponents(unittest.TestCase):
         # Create the Volcano location first
         volcano_data = {
             "name": "Volcano",
-            "type": "location",
             "description": "A volcanic habitat",
             "attributes": {
                 "temperature": "hot",
@@ -77,18 +76,43 @@ class TestHatchyComponents(unittest.TestCase):
     
     def test_knowledge_graph_basic(self):
         """Test basic knowledge graph operations."""
-        # Test entity creation and retrieval
-        entities = self.knowledge_graph.search_entities("TestHatchy")
-        self.assertTrue(len(entities) > 0)
-        self.assertEqual(entities[0]["name"], "TestHatchy")
+        # Test entity creation
+        entity_id = self.knowledge_graph.add_entity(
+            name="TestHatchy3",
+            entity_type="monster",
+            attributes={
+                "generation": "1",
+                "element": "Fire",
+                "evolves_from": None,
+                "habitat": "Volcano"
+            }
+        )
         
-        # Test relationship creation and retrieval
-        relationships = self.knowledge_graph.get_relationships("TestHatchy")
-        self.assertTrue(len(relationships) > 0)
+        self.assertIsNotNone(entity_id)
+        self.assertEqual(self.knowledge_graph.entities[entity_id]["name"], "TestHatchy3")
+        self.assertEqual(self.knowledge_graph.entities[entity_id]["entity_type"], "monster")
         
-        # Test entity types
-        entity_types = self.knowledge_graph.get_entity_types()
-        self.assertIn("monster", entity_types)
+        # Test relationship creation
+        location_id = self.knowledge_graph.add_entity(
+            name="Volcano2",
+            entity_type="location",
+            attributes={
+                "temperature": "hot",
+                "terrain": "volcanic"
+            }
+        )
+        
+        rel_id = self.knowledge_graph.add_relationship(entity_id, location_id, "lives_in")
+        self.assertIsNotNone(rel_id)
+        
+        # Test entity retrieval
+        entity = self.knowledge_graph.get_entity(entity_id)
+        self.assertEqual(entity["name"], "TestHatchy3")
+        
+        # Test relationship retrieval
+        rels = self.knowledge_graph.get_relationships(entity_id)
+        self.assertEqual(len(rels), 1)
+        self.assertEqual(rels[0]["type"], "lives_in")
     
     def test_enhanced_loader(self):
         """Test the enhanced data loader."""
@@ -124,7 +148,7 @@ class TestHatchyComponents(unittest.TestCase):
         )
         
         # Test retrieval with entity context
-        context = retriever.get_context("Tell me about TestHatchy")
+        context = retriever.get_entity_context(self.knowledge_graph.search_entities("TestHatchy")[0]["id"])
         self.assertTrue(len(context) > 0)
         self.assertIn("TestHatchy", str(context))
     

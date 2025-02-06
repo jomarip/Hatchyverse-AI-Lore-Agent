@@ -75,119 +75,123 @@ class RelationshipExtractor:
         return min(1.0, confidence)
 
 class EnhancedDataLoader:
-    """Enhanced data loader for processing various file formats."""
+    """Enhanced data loader with relationship extraction and validation."""
     
     def __init__(self, knowledge_graph: HatchyKnowledgeGraph):
         self.knowledge_graph = knowledge_graph
-    
-    def load_csv_data(
-        self,
-        file_path: str,
-        entity_type: Optional[str] = None,
-        relationship_mapping: Optional[Dict[str, str]] = None
-    ) -> List[str]:
-        """Load entity data from CSV file."""
+        self.logger = logging.getLogger(__name__)
+        
+    def load_csv_data(self, file_path: str, entity_type: str, relationship_mapping: Optional[Dict[str, str]] = None):
+        """Load entity data from CSV with relationship extraction."""
         try:
-            entity_ids = []
-            file_path = Path(file_path)
+            df = pd.read_csv(file_path)
+            loaded_count = 0
             
-            with open(file_path, 'r', encoding='utf-8') as f:
-                reader = csv.DictReader(f)
-                
-                for row in reader:
-                    try:
-                        # Process entity attributes
-                        attributes = {}
-                        for key, value in row.items():
-                            if key.lower() not in ['id', 'name', 'type'] and value:
-                                attributes[key] = value
-                        
-                        # Determine entity type
-                        if not entity_type:
-                            if 'type' in row:
-                                entity_type = row['type']
-                            else:
-                                entity_type = file_path.stem
-                        
-                        # Create entity
-                        entity_id = self.knowledge_graph.add_entity(
-                            name=row.get('name', f"Entity_{len(entity_ids)}"),
-                            entity_type=entity_type,
-                            attributes=attributes,
-                            metadata={'source_file': str(file_path)}
-                        )
-                        
-                        entity_ids.append(entity_id)
-                        
-                        # Process relationships if mapping provided
-                        if relationship_mapping:
-                            self._process_relationships(
-                                entity_id,
-                                row,
-                                relationship_mapping
-                            )
-                            
-                    except Exception as e:
-                        logger.error(f"Error processing row: {str(e)}")
-                        continue
-            
-            logger.info(f"Loaded {len(entity_ids)} entities from {file_path}")
-            return entity_ids
+            for _, row in df.iterrows():
+                try:
+                    # Convert row to dict and extract core fields
+                    data = row.to_dict()
+                    name = data.pop('name', f"Entity_{uuid.uuid4().hex[:8]}")
+                    
+                    # Extract relationship fields
+                    relationship_data = {}
+                    if relationship_mapping:
+                        for source_field, rel_type in relationship_mapping.items():
+                            if source_field in data and pd.notna(data[source_field]):
+                                relationship_data[rel_type] = data.pop(source_field)
+                    
+                    # Add entity with individual parameters
+                    entity_id = self.knowledge_graph.add_entity(
+                        name=name,
+                        entity_type=entity_type,
+                        attributes=data,
+                        metadata={'source_file': file_path},
+                        source=file_path
+                    )
+                    
+                    # Process relationships
+                    for rel_type, target_name in relationship_data.items():
+                        # Create target entity if it doesn't exist
+                        target_id = self._get_or_create_entity(target_name, entity_type)
+                        if target_id:
+                            self.knowledge_graph.add_relationship(entity_id, target_id, rel_type)
+                    
+                    loaded_count += 1
+                    
+                except Exception as e:
+                    self.logger.error(f"Error processing row: {str(e)}")
+                    continue
+                    
+            self.logger.info(f"Loaded {loaded_count} entities from {file_path}")
             
         except Exception as e:
-            logger.error(f"Error loading CSV file {file_path}: {str(e)}")
-            return []
-    
-    def load_text_data(
-        self,
-        file_path: str,
-        chunk_size: int = 1000,
-        overlap: int = 200
-    ) -> List[str]:
-        """Load and chunk text data."""
-        try:
-            entity_ids = []
-            file_path = Path(file_path)
+            self.logger.error(f"Error loading CSV file {file_path}: {str(e)}")
             
+    def load_text_data(self, file_path: str, chunk_size: int = 1000):
+        """Load text data with chunking and entity extraction."""
+        try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 text = f.read()
+                
+            # Split into chunks
+            chunks = self._split_text(text, chunk_size)
             
-            # Split text into chunks
-            chunks = self._chunk_text(text, chunk_size, overlap)
-            
-            # Create text entities
             for i, chunk in enumerate(chunks):
-                entity_id = self.knowledge_graph.add_entity(
-                    name=f"{file_path.stem}_chunk_{i}",
-                    entity_type='text_chunk',
-                    attributes={
-                        'content': chunk,
-                        'chunk_index': i,
-                        'total_chunks': len(chunks)
-                    },
-                    metadata={
-                        'source_file': str(file_path),
-                        'chunk_size': chunk_size,
-                        'overlap': overlap
-                    }
-                )
-                
-                entity_ids.append(entity_id)
-                
-                # Link chunks sequentially
-                if i > 0:
-                    self.knowledge_graph.add_relationship(
-                        entity_ids[i-1],
-                        entity_id,
-                        'next_chunk'
+                try:
+                    # Create entity for chunk
+                    self.knowledge_graph.add_entity(
+                        name=f"Chunk_{i}",
+                        entity_type="text_chunk",
+                        attributes={'content': chunk, 'position': i},
+                        source=file_path
                     )
-            
-            logger.info(f"Created {len(entity_ids)} text chunks from {file_path}")
-            return entity_ids
-            
+                except Exception as e:
+                    self.logger.error(f"Error processing chunk {i}: {str(e)}")
+                    
         except Exception as e:
-            logger.error(f"Error loading text file {file_path}: {str(e)}")
-            return []
+            self.logger.error(f"Error loading text file {file_path}: {str(e)}")
+            
+    def _get_or_create_entity(self, name: str, entity_type: str) -> Optional[str]:
+        """Get entity by name or create if it doesn't exist."""
+        # Search for existing entity
+        existing = self.knowledge_graph.get_entity_by_name(name)
+        if existing:
+            return existing['id']
+        
+        # Create new entity
+        try:
+            return self.knowledge_graph.add_entity(
+                name=name,
+                entity_type=entity_type,
+                attributes={},
+                metadata={'source': 'auto_created'},
+                source='auto_created'
+            )
+        except Exception as e:
+            self.logger.error(f"Error creating entity {name}: {str(e)}")
+            return None
+            
+    def _split_text(self, text: str, chunk_size: int) -> List[str]:
+        """Split text into chunks of roughly equal size."""
+        words = text.split()
+        chunks = []
+        current_chunk = []
+        current_size = 0
+        
+        for word in words:
+            word_size = len(word) + 1  # Add 1 for space
+            if current_size + word_size > chunk_size and current_chunk:
+                chunks.append(' '.join(current_chunk))
+                current_chunk = [word]
+                current_size = word_size
+            else:
+                current_chunk.append(word)
+                current_size += word_size
+                
+        if current_chunk:
+            chunks.append(' '.join(current_chunk))
+            
+        return chunks
     
     def load_json_data(
         self,
@@ -216,7 +220,7 @@ class EnhancedDataLoader:
                                 mapped_item[entity_field] = item[json_field]
                         item = mapped_item
                     
-                    # Create entity
+                    # Create entity with individual parameters
                     entity_id = self.knowledge_graph.add_entity(
                         name=item.get('name', f"Entity_{len(entity_ids)}"),
                         entity_type=item.get('type', file_path.stem),
@@ -224,7 +228,8 @@ class EnhancedDataLoader:
                             k: v for k, v in item.items()
                             if k not in ['id', 'name', 'type']
                         },
-                        metadata={'source_file': str(file_path)}
+                        metadata={'source_file': str(file_path)},
+                        source=str(file_path)
                     )
                     
                     entity_ids.append(entity_id)
@@ -239,70 +244,6 @@ class EnhancedDataLoader:
         except Exception as e:
             logger.error(f"Error loading JSON file {file_path}: {str(e)}")
             return []
-    
-    def _chunk_text(
-        self,
-        text: str,
-        chunk_size: int,
-        overlap: int
-    ) -> List[str]:
-        """Split text into overlapping chunks."""
-        chunks = []
-        start = 0
-        
-        while start < len(text):
-            # Get chunk with overlap
-            end = start + chunk_size
-            chunk = text[start:end]
-            
-            # Adjust chunk boundaries to avoid splitting words
-            if end < len(text):
-                # Find last space within chunk
-                last_space = chunk.rfind(' ')
-                if last_space != -1:
-                    chunk = chunk[:last_space]
-                    end = start + last_space
-            
-            chunks.append(chunk.strip())
-            
-            # Move start position, accounting for overlap
-            start = end - overlap
-            
-            # Ensure we don't get stuck in small text
-            if start >= len(text) - overlap:
-                break
-        
-        return chunks
-    
-    def _process_relationships(
-        self,
-        entity_id: str,
-        row: Dict[str, str],
-        relationship_mapping: Dict[str, str]
-    ) -> None:
-        """Process relationships based on mapping."""
-        for field, rel_type in relationship_mapping.items():
-            if field in row and row[field]:
-                # Handle multiple relationships in one field
-                targets = row[field].split(',')
-                
-                for target in targets:
-                    target = target.strip()
-                    if not target:
-                        continue
-                    
-                    # Try to find target entity
-                    target_entity = self.knowledge_graph.get_entity_by_name(target)
-                    if target_entity:
-                        self.knowledge_graph.add_relationship(
-                            entity_id,
-                            target_entity['id'],
-                            rel_type
-                        )
-                    else:
-                        logger.warning(
-                            f"Target entity '{target}' not found for relationship '{rel_type}'"
-                        )
     
     def load_directory(
         self,
