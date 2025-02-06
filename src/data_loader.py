@@ -110,4 +110,51 @@ class EnhancedDataLoader:
             'uses_item': 'item',
             'belongs_to': 'trainer'
         }
-        return type_mapping.get(relationship_type, 'entity') 
+        return type_mapping.get(relationship_type, 'entity')
+
+    def _process_monster_row(self, row: dict) -> dict:
+        # Explicit element type handling
+        element = str(row.get('element', '')).strip().lower()
+        if not element:
+            element = 'unknown'
+        
+        return {
+            'name': row['name'],
+            'element': element,
+            'generation': int(row.get('generation', 1)),
+            'height': safe_int(row.get('height')),
+            'weight': safe_int(row.get('weight')),
+            'description': clean_text(row.get('description')),
+            'evolution_stage': parse_evolution_stage(row),
+            'habitat': clean_text(row.get('habitat')),
+            'image': validate_image_url(row.get('image'))
+        }
+
+    def parse_evolution_stage(self, row: dict) -> str:
+        stage = str(row.get('evolution_stage', '')).lower()
+        return stage if stage in ['basic', 'stage1', 'mega'] else 'basic'
+
+    def load_csv_data(self, file_path: str, entity_type: str, relationship_mapping: dict):
+        # During entity creation:
+        element = row.get('Element', '').strip().lower()
+        if element:
+            element_id = self.knowledge_graph.resolve_entity(element, 'element')
+            self.knowledge_graph.add_relationship(
+                source_id=entity_id,
+                target_id=element_id,
+                relationship_type='has_element'
+            )
+        
+        # For other relationships:
+        for rel_field, rel_type in relationship_mapping.items():
+            target_name = row.get(rel_field)
+            if target_name:
+                target_id = self.knowledge_graph.resolve_entity(
+                    name=target_name,
+                    entity_type=rel_type.split('_')[-1]  # e.g. 'affiliated_with' -> 'with'
+                )
+                self.knowledge_graph.add_relationship(
+                    source_id=entity_id,
+                    target_id=target_id,
+                    relationship_type=rel_type
+                ) 

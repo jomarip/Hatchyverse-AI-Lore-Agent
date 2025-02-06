@@ -2,12 +2,12 @@ from typing import Dict, List, Any, Optional
 import logging
 from langchain_core.language_models import BaseLLM
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate
 from .knowledge_graph import HatchyKnowledgeGraph
 from .contextual_retriever import ContextualRetriever
 from .enhanced_loader import EnhancedDataLoader
 from .response_validator import ResponseValidator
 from langchain.vectorstores import VectorStore
+from ..prompts.chat_prompts import get_prompt_template
 
 logger = logging.getLogger(__name__)
 
@@ -26,27 +26,166 @@ class EnhancedChatbot:
         self.validator = ResponseValidator(knowledge_graph)
         self.data_loader = EnhancedDataLoader(knowledge_graph)
         
-        # Enhanced system prompt
-        self.qa_template = ChatPromptTemplate.from_template("""
-            You are a Hatchyverse Lore Expert. Follow these rules:
-            1. ONLY use information from the provided context
-            2. Format responses in a Fandom Wiki style with clear sections
-            3. NEVER invent or assume details not in context
-            4. Cite specific sources when available
-            5. Use proper terminology (e.g. "Hatchy" not "creature" or "monster")
-            6. Include relevant relationships and connections
-            7. If information is not in context, say "Based on available information, [answer]"
-            8. Format numbers and statistics clearly
-            9. Use bullet points for lists
-            10. Include a "Trivia" section if interesting facts are available
+    def generate_response(self, query: str) -> Dict[str, Any]:
+        """Generate response with enhanced context awareness and validation."""
+        try:
+            # Get relevant context
+            contexts = self.retriever.get_context(query)
+            logger.debug(f"Retrieved {len(contexts)} context items")
             
-            Question: {query}
+            # Determine query type and get appropriate prompt
+            query_type = self._determine_query_type(query, contexts)
+            prompt_template = get_prompt_template(query_type)
             
-            Context:
-            {context}
+            # Format context
+            formatted_context = self._format_context(contexts)
             
-            Answer in a clear, well-structured Fandom Wiki style.
-        """)
+            # Prepare prompt variables
+            prompt_vars = {
+                "query": query,
+                "context": formatted_context
+            }
+            
+            # Add query-type specific variables
+            if query_type == 'element':
+                element = self._extract_element(contexts)
+                if element:
+                    prompt_vars.update({
+                        "element": element,
+                        "element_emoji": self._get_element_emoji(element)
+                    })
+            
+            # Generate response using LLM
+            chain = prompt_template | self.llm | StrOutputParser()
+            response_text = chain.invoke(prompt_vars)
+            
+            # Validate response
+            validation = self.validator.validate(response_text, contexts)
+            
+            # Apply enhancements if needed
+            if validation['enhancements']:
+                response_text = self._enhance_response(response_text, validation['enhancements'])
+            
+            return {
+                "response": response_text,
+                "validation": validation,
+                "context_used": len(contexts),
+                "query_type": query_type
+            }
+            
+        except Exception as e:
+            logger.error(f"Error generating response: {str(e)}")
+            return self._create_error_response(str(e))
+            
+    def _determine_query_type(self, query: str, contexts: List[Dict[str, Any]]) -> str:
+        """Determine the type of query for appropriate prompt selection."""
+        query_lower = query.lower()
+        
+        # Check for element-specific queries
+        elements = ['fire', 'water', 'plant', 'dark', 'light', 'void']
+        if any(f"{element} type" in query_lower or f"{element}-type" in query_lower for element in elements):
+            return 'element'
+            
+        # Check for evolution queries
+        if any(term in query_lower for term in ['evolve', 'evolution', 'evolves into', 'evolves from']):
+            return 'evolution'
+            
+        # Check for world/location queries
+        if any(term in query_lower for term in ['where', 'location', 'world', 'region', 'habitat']):
+            return 'world'
+            
+        # Check for comparison queries
+        if any(term in query_lower for term in ['compare', 'difference between', 'stronger', 'better']):
+            return 'comparison'
+            
+        return 'base'
+        
+    def _format_context(self, contexts: List[Dict[str, Any]]) -> str:
+        """Format context for LLM consumption."""
+        formatted_parts = []
+        
+        for ctx in contexts:
+            # Add main content
+            if 'text_content' in ctx:
+                formatted_parts.append(f"Content: {ctx['text_content']}")
+            
+            # Add entity context if available
+            if 'entity_context' in ctx:
+                entity_ctx = ctx['entity_context']
+                entity = entity_ctx['entity']
+                formatted_parts.append(
+                    f"Entity: {entity['name']} ({entity['entity_type']})\n"
+                    f"Attributes: {', '.join(f'{k}: {v}' for k, v in entity['attributes'].items())}"
+                )
+                
+                # Add relationships
+                if 'relationships' in entity_ctx:
+                    rel_parts = []
+                    for rel in entity_ctx['relationships']:
+                        rel_parts.append(
+                            f"- {rel['type']}: {rel['target_name']}"
+                        )
+                    if rel_parts:
+                        formatted_parts.append("Relationships:\n" + "\n".join(rel_parts))
+            
+            # Add metadata
+            if 'metadata' in ctx:
+                meta = ctx['metadata']
+                meta_parts = []
+                for k, v in meta.items():
+                    if v and k not in ['source', 'type']:
+                        meta_parts.append(f"{k}: {v}")
+                if meta_parts:
+                    formatted_parts.append("Metadata: " + ", ".join(meta_parts))
+        
+        return "\n\n".join(formatted_parts)
+        
+    def _extract_element(self, contexts: List[Dict[str, Any]]) -> Optional[str]:
+        """Extract the primary element from context."""
+        for ctx in contexts:
+            if 'metadata' in ctx and 'element' in ctx['metadata']:
+                return ctx['metadata']['element']
+        return None
+        
+    def _get_element_emoji(self, element: str) -> str:
+        """Get emoji for element type."""
+        emoji_map = {
+            'fire': '🔥',
+            'water': '💧',
+            'plant': '🌿',
+            'dark': '🌑',
+            'light': '✨',
+            'void': '🌀',
+            'electric': '⚡',
+            'earth': '🌍'
+        }
+        return emoji_map.get(element.lower(), '❓')
+        
+    def _enhance_response(self, response: str, enhancements: List[Dict[str, Any]]) -> str:
+        """Enhance response based on validation suggestions."""
+        enhanced_parts = [response]
+        
+        # Add suggested information
+        if enhancements:
+            enhanced_parts.append("\n\n### Additional Information")
+            for enhancement in enhancements:
+                if 'suggestion' in enhancement:
+                    enhanced_parts.append(f"- {enhancement['suggestion']}")
+        
+        return "\n".join(enhanced_parts)
+        
+    def _create_error_response(self, error_msg: str) -> Dict[str, Any]:
+        """Create standardized error response."""
+        return {
+            "response": "I apologize, but I encountered an error while processing your question.",
+            "error": error_msg,
+            "validation": {
+                'is_valid': False,
+                'issues': [{'type': 'error', 'message': error_msg}],
+                'enhancements': [],
+                'source_coverage': {'context_used': 0, 'coverage_score': 0.0}
+            }
+        }
     
     def load_data(self, file_path: str):
         """Load data from file."""
@@ -54,106 +193,6 @@ class EnhancedChatbot:
             self.data_loader.load_csv_data(file_path)
         else:
             self.data_loader.load_text_data(file_path)
-    
-    def generate_response(self, query: str) -> Dict[str, Any]:
-        """Generate response with enhanced context awareness."""
-        try:
-            # Get relevant context
-            contexts = self.retriever.get_context(query)
-            logger.debug(f"Retrieved {len(contexts)} context items")
-            
-            # Check if this is a count query
-            if contexts and contexts[0].get('metadata', {}).get('type') == 'count_result':
-                count_info = contexts[0]
-                filters = count_info['filters']
-                count = count_info['count']
-                
-                # Format count response
-                if 'generation' in filters:
-                    response_text = f"There are {count} Generation {filters['generation']} Hatchies in the database."
-                    if count > 0:
-                        response_text += "\nWould you like to know more about any specific Gen{} Hatchy?".format(filters['generation'])
-                else:
-                    response_text = f"There are {count} Hatchies matching your criteria."
-                
-                return {
-                    "response": response_text,
-                    "validation": {
-                        'is_valid': True,
-                        'issues': [],
-                        'enhancements': [],
-                        'source_coverage': {'context_used': 1, 'coverage_score': 1.0}
-                    },
-                    "context_used": 1
-                }
-            
-            # Format context for prompt
-            formatted_context = []
-            for ctx in contexts:
-                if 'entity' in ctx:
-                    # Format entity context
-                    entity = ctx['entity']
-                    text = f"Entity: {entity['name']}\n"
-                    text += f"Type: {entity.get('entity_type', 'Unknown')}\n"
-                    
-                    # Get attributes safely
-                    attrs = entity.get('attributes', {})
-                    if 'element' in attrs:
-                        text += f"Element: {attrs['element']}\n"
-                    if 'description' in attrs:
-                        text += f"Description: {attrs['description']}\n"
-                    
-                    # Add relationships
-                    if 'relationships' in ctx and ctx['relationships']:
-                        text += "Relationships:\n"
-                        for rel in ctx['relationships']:
-                            text += f"- {rel['type']}: {rel['target_name']}\n"
-                    
-                    formatted_context.append(text)
-                elif 'text_content' in ctx:
-                    # Format text content
-                    formatted_context.append(f"Source: {ctx['metadata'].get('type', 'Unknown')}\n{ctx['text_content']}")
-            
-            context_text = "\n\n".join(formatted_context) if formatted_context else "No specific context found."
-            
-            # Generate response
-            chain = self.qa_template | self.llm | StrOutputParser()
-            response_text = chain.invoke({
-                "query": query,
-                "context": context_text
-            })
-            
-            # Validate response
-            try:
-                validation = self.validator.validate(response_text, contexts)
-            except Exception as ve:
-                logger.error(f"Validation error: {str(ve)}")
-                validation = {
-                    'is_valid': False,
-                    'issues': [{'type': 'validation_error', 'message': str(ve)}],
-                    'enhancements': [],
-                    'source_coverage': {'context_used': 0, 'coverage_score': 0.0}
-                }
-            
-            # Format final response
-            return {
-                "response": response_text,
-                "validation": validation,
-                "context_used": len(contexts)
-            }
-            
-        except Exception as e:
-            logger.error(f"Error generating response: {str(e)}")
-            return {
-                "response": "I apologize, but I encountered an error while processing your question.",
-                "error": str(e),
-                "validation": {
-                    'is_valid': False,
-                    'issues': [{'type': 'error', 'message': str(e)}],
-                    'enhancements': [],
-                    'source_coverage': {'context_used': 0, 'coverage_score': 0.0}
-                }
-            }
     
     def _get_system_prompt(self) -> str:
         """Get the system prompt for the chatbot."""

@@ -464,3 +464,267 @@ MIT License
 - Hatchyverse Community
 - LangChain Framework
 - FastAPI 
+
+## Extending System Capabilities
+
+### Adding New Query Capabilities
+
+The system uses a flexible pattern-based approach for query understanding. Here's how to add new capabilities:
+
+1. **Add New Attribute Patterns**
+   ```python
+   # In src/models/contextual_retriever.py
+   self.attribute_patterns.update({
+       'rarity': {
+           'patterns': [
+               r'(common|rare|legendary|mythic)',
+               r'rarity\s+(level|type|of)\s+(\w+)'
+           ],
+           'value_map': {
+               'uncommon': 'rare',
+               'super rare': 'legendary'
+           },
+           'attribute': 'rarity'
+       },
+       'power_level': {
+           'patterns': [
+               r'power\s+(?:level|rating)\s*(\d+)',
+               r'level\s*(\d+)\s*power'
+           ],
+           'attribute': 'power_level'
+       }
+   })
+   ```
+
+2. **Add New Query Types**
+   ```python
+   # Add new query type patterns
+   self.query_type_patterns.update({
+       'comparison': [
+           r'compare\s+(?:between\s+)?(.+)\s+and\s+(.+)',
+           r'difference\s+between\s+(.+)\s+and\s+(.+)'
+       ],
+       'evolution_chain': [
+           r'evolution(?:\s+chain|\s+line|\s+path)\s+(?:of\s+)?(\w+)',
+           r'how\s+does\s+(\w+)\s+evolve'
+       ]
+   })
+   ```
+
+3. **Add Content Filters**
+   ```python
+   # Add new attribute filters
+   attribute_filters = ['size', 'mountable', 'habitat', 'rarity', 'power_level']
+   
+   # Add filter logic
+   if attr == 'rarity':
+       rarity_value = filters['rarity'].lower()
+       if not any(term in desc for term in [rarity_value, f"rarity: {rarity_value}"]):
+           matches_all = False
+           break
+   ```
+
+### Adding New Data Types
+
+1. **Define New Entity Types**
+   ```python
+   # In src/models/knowledge_graph.py
+   VALID_ENTITY_TYPES = [
+       'monster',
+       'location',
+       'item',
+       'ability',
+       'quest',
+       'npc'
+   ]
+   ```
+
+2. **Create Type-Specific Loaders**
+   ```python
+   # In src/models/enhanced_loader.py
+   def load_quest_data(self, file_path: str):
+       """Load quest data with specific handling."""
+       try:
+           with open(file_path, 'r') as f:
+               data = json.load(f)
+           
+           for quest in data:
+               # Process quest-specific fields
+               entity_id = self.knowledge_graph.add_entity(
+                   name=quest['title'],
+                   entity_type='quest',
+                   attributes={
+                       'difficulty': quest.get('difficulty'),
+                       'rewards': quest.get('rewards'),
+                       'prerequisites': quest.get('prerequisites')
+                   }
+               )
+               
+               # Add quest-specific relationships
+               if 'required_items' in quest:
+                   for item in quest['required_items']:
+                       self.knowledge_graph.add_relationship(
+                           entity_id,
+                           item['id'],
+                           'requires_item'
+                       )
+       except Exception as e:
+           logger.error(f"Error loading quest data: {str(e)}")
+   ```
+
+3. **Add Type-Specific Validation Rules**
+   ```python
+   # In src/models/response_validator.py
+   def validate_quest_response(self, response: str, context: List[Dict[str, Any]]):
+       """Validate quest-specific response content."""
+       issues = []
+       
+       # Check for required quest information
+       required_fields = ['difficulty', 'rewards', 'prerequisites']
+       for field in required_fields:
+           if field.lower() not in response.lower():
+               issues.append({
+                   'type': 'missing_field',
+                   'field': field,
+                   'message': f"Response should include quest {field}"
+               })
+       
+       return issues
+   ```
+
+### Adding New Relationship Types
+
+1. **Define New Relationships**
+   ```python
+   # In src/models/knowledge_graph.py
+   VALID_RELATIONSHIP_TYPES = [
+       'evolves_from',
+       'lives_in',
+       'drops_item',
+       'teaches_ability',
+       'starts_quest',
+       'requires_item'
+   ]
+   ```
+
+2. **Add Relationship Extraction Patterns**
+   ```python
+   # In src/models/enhanced_loader.py
+   self.relationship_patterns.update({
+       'teaches_ability': r'can teach|learns|grants ability\s+(\w+)',
+       'drops_item': r'drops|can drop|leaves behind\s+(\w+)',
+       'starts_quest': r'begins|starts|initiates quest\s+(\w+)'
+   })
+   ```
+
+3. **Implement Relationship-Specific Logic**
+   ```python
+   def process_ability_relationships(self, entity_id: str, description: str):
+       """Process ability-related relationships from description."""
+       ability_matches = re.finditer(
+           self.relationship_patterns['teaches_ability'],
+           description
+       )
+       
+       for match in ability_matches:
+           ability_name = match.group(1)
+           ability_id = self._get_or_create_entity(
+               ability_name,
+               'ability'
+           )
+           if ability_id:
+               self.knowledge_graph.add_relationship(
+                   entity_id,
+                   ability_id,
+                   'teaches_ability'
+               )
+   ```
+
+### Adding New Response Formats
+
+1. **Create Format Templates**
+   ```python
+   # In src/models/enhanced_chatbot.py
+   RESPONSE_TEMPLATES = {
+       'quest': """
+           # {quest_name}
+           
+           ## Overview
+           {description}
+           
+           ## Requirements
+           - Level: {level_requirement}
+           - Prerequisites: {prerequisites}
+           
+           ## Rewards
+           {rewards}
+           
+           ## Steps
+           {steps}
+       """,
+       'ability': """
+           # {ability_name}
+           
+           ## Description
+           {description}
+           
+           ## Stats
+           - Power: {power}
+           - Cost: {cost}
+           - Cooldown: {cooldown}
+           
+           ## Learned By
+           {learned_by}
+       """
+   }
+   ```
+
+2. **Add Format-Specific Processing**
+   ```python
+   def format_quest_response(self, quest_data: Dict[str, Any]) -> str:
+       """Format quest information using template."""
+       return self.RESPONSE_TEMPLATES['quest'].format(
+           quest_name=quest_data['name'],
+           description=quest_data.get('description', 'No description available'),
+           level_requirement=quest_data.get('level_req', 'None'),
+           prerequisites=self._format_prerequisites(quest_data.get('prerequisites', [])),
+           rewards=self._format_rewards(quest_data.get('rewards', {})),
+           steps=self._format_quest_steps(quest_data.get('steps', []))
+       )
+   ```
+
+### Testing New Capabilities
+
+1. **Add Test Cases**
+   ```python
+   # In tests/test_components.py
+   def test_new_attribute_patterns():
+       analyzer = QueryAnalyzer()
+       
+       # Test rarity patterns
+       result = analyzer.analyze("show me legendary hatchy")
+       assert result['filters']['rarity'] == 'legendary'
+       
+       # Test power level patterns
+       result = analyzer.analyze("find power level 5 monsters")
+       assert result['filters']['power_level'] == '5'
+   ```
+
+2. **Add Integration Tests**
+   ```python
+   def test_quest_system_integration():
+       # Test quest data loading
+       loader.load_quest_data('test_data/quests.json')
+       
+       # Test quest retrieval
+       response = chatbot.generate_response("tell me about the dragon quest")
+       assert 'Requirements' in response
+       assert 'Rewards' in response
+       
+       # Test relationship handling
+       quest = knowledge_graph.get_entity_by_name("Dragon Quest")
+       relationships = knowledge_graph.get_entity_relationships(quest['id'])
+       assert any(r['type'] == 'requires_item' for r in relationships)
+   ```
+
+Remember to update the documentation when adding new capabilities and ensure proper error handling and validation for new features. 

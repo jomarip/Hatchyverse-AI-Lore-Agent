@@ -5,7 +5,7 @@ from langchain_openai import OpenAIEmbeddings
 import os
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.language_models import BaseLLM
-from langchain_community.chat_models import ChatOpenAI
+from langchain_openai import ChatOpenAI
 from src.models.knowledge_graph import HatchyKnowledgeGraph
 from src.models.enhanced_loader import EnhancedDataLoader
 from src.models.enhanced_chatbot import EnhancedChatbot
@@ -15,8 +15,8 @@ from langchain.schema import Document
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(message)s',  # Simplified format
+    level=logging.DEBUG,  # Changed from INFO to DEBUG
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',  # More detailed format
     handlers=[
         logging.StreamHandler()
     ]
@@ -28,6 +28,10 @@ logging.getLogger('httpcore').setLevel(logging.WARNING)
 logging.getLogger('chromadb').setLevel(logging.WARNING)
 logging.getLogger('openai').setLevel(logging.WARNING)
 logging.getLogger('urllib3').setLevel(logging.WARNING)
+
+# Ensure our loggers are at DEBUG level
+logging.getLogger('src.models.enhanced_loader').setLevel(logging.DEBUG)
+logging.getLogger('src.models.knowledge_graph').setLevel(logging.DEBUG)
 
 logger = logging.getLogger(__name__)
 
@@ -80,124 +84,40 @@ class InteractiveTest:
         """Load all data using the enhanced loader."""
         try:
             loader = EnhancedDataLoader(self.knowledge_graph)
+            loader.set_data_directory(self.data_dir)
+            
             text_splitter = RecursiveCharacterTextSplitter(
                 chunk_size=1000,
                 chunk_overlap=200,
                 separators=["\n\n", "\n", ".", "!", "?", ",", " ", ""]
             )
             
-            # Load monster data
-            gen1_path = self.data_dir / "Hatchy - Monster Data - gen 1.csv"
-            if gen1_path.exists():
-                gen1_entities = loader.load_csv_data(
-                    str(gen1_path),
-                    entity_type="monster",
-                    relationship_mapping={
-                        "evolves_from": "evolution_source",
-                        "habitat": "lives_in"
-                    }
-                )
-                if gen1_entities:
-                    # Create documents for vector store
-                    docs = []
-                    for entity in gen1_entities:
-                        text = f"Name: {entity['name']}\n"
-                        text += f"Generation: 1\n"
-                        text += f"Type: {entity.get('attributes', {}).get('element', 'Unknown')}\n"
-                        text += f"Description: {entity.get('attributes', {}).get('description', '')}\n"
-                        chunks = text_splitter.split_text(text)
-                        for chunk in chunks:
-                            docs.append(Document(
-                                page_content=chunk,
-                                metadata={"entity_id": entity["id"], "type": "monster", "generation": "1"}
-                            ))
-                    
-                    if docs:
-                        self.vector_store.add_documents(docs)
-                    logger.info("Loaded Gen1 Hatchy data")
+            # Load all CSV data with relationships
+            loaded_entities = loader.load_all_data()
+            logger.info("Loaded entities:")
+            for entity_type, count in loaded_entities.items():
+                logger.info(f"- {count} {entity_type} entities")
             
-            gen2_path = self.data_dir / "Hatchy - Monster Data - gen 2.csv"
-            if gen2_path.exists():
-                gen2_entities = loader.load_csv_data(
-                    str(gen2_path),
-                    entity_type="monster",
-                    relationship_mapping={
-                        "evolves_from": "evolution_source",
-                        "habitat": "lives_in"
-                    }
-                )
-                if gen2_entities:
-                    # Create documents for vector store
-                    docs = []
-                    for entity in gen2_entities:
-                        text = f"Name: {entity['name']}\n"
-                        text += f"Generation: 2\n"
-                        text += f"Type: {entity.get('attributes', {}).get('element', 'Unknown')}\n"
-                        text += f"Description: {entity.get('attributes', {}).get('description', '')}\n"
-                        chunks = text_splitter.split_text(text)
-                        for chunk in chunks:
-                            docs.append(Document(
-                                page_content=chunk,
-                                metadata={"entity_id": entity["id"], "type": "monster", "generation": "2"}
-                            ))
-                    
-                    if docs:
-                        self.vector_store.add_documents(docs)
-                    logger.info("Loaded Gen2 Hatchy data")
+            # Load text files for additional context
+            text_files = list(self.data_dir.glob("*.txt"))
+            text_files.extend(self.data_dir.glob("*.md"))
             
-            # Load world data
-            world_path = self.data_dir / "Hatchy World _ world design.txt"
-            if world_path.exists():
-                with open(world_path, 'r', encoding='utf-8') as f:
-                    text = f.read()
-                chunks = text_splitter.split_text(text)
-                docs = [Document(page_content=chunk, metadata={"type": "world_design"}) for chunk in chunks]
-                if docs:
-                    self.vector_store.add_documents(docs)
-                
-                # Load into knowledge graph
-                world_entities = loader.load_text_data(str(world_path))
-                if world_entities:
-                    logger.info(f"Loaded {len(world_entities)} world design entities")
-            
-            # Load story data
-            story_path = self.data_dir / "Hatchy World Comic_ Chaos saga.txt"
-            if story_path.exists():
-                with open(story_path, 'r', encoding='utf-8') as f:
-                    text = f.read()
-                chunks = text_splitter.split_text(text)
-                docs = [Document(page_content=chunk, metadata={"type": "story"}) for chunk in chunks]
-                if docs:
-                    self.vector_store.add_documents(docs)
-                
-                # Load into knowledge graph
-                story_entities = loader.load_text_data(str(story_path))
-                if story_entities:
-                    logger.info(f"Loaded {len(story_entities)} story entities")
-            
-            # Load eco presentation data
-            eco_path = self.data_dir / "Hatchyverse Eco Presentation v3.txt"
-            if eco_path.exists():
-                with open(eco_path, 'r', encoding='utf-8') as f:
-                    text = f.read()
-                chunks = text_splitter.split_text(text)
-                docs = [Document(page_content=chunk, metadata={"type": "eco_presentation"}) for chunk in chunks]
-                if docs:
-                    self.vector_store.add_documents(docs)
-                
-                # Load into knowledge graph
-                eco_entities = loader.load_text_data(str(eco_path))
-                if eco_entities:
-                    logger.info(f"Loaded {len(eco_entities)} eco presentation entities")
+            for text_file in text_files:
+                chunks = loader.load_text_data(str(text_file))
+                if chunks:
+                    logger.info(f"Loaded {len(chunks)} text chunks from {text_file.name}")
             
             # Log knowledge graph statistics
             stats = self.knowledge_graph.get_statistics()
             logger.info("\nKnowledge Graph Statistics:")
-            for key, value in stats.items():
-                logger.info(f"- {key}: {value}")
+            logger.info(f"- Total Entities: {stats['total_entities']}")
+            logger.info(f"- Entity Types: {', '.join(stats['entity_types'])}")
+            logger.info(f"- Total Relationships: {stats['total_relationships']}")
+            logger.info(f"- Relationship Types: {', '.join(stats['relationship_types'])}")
+            logger.info(f"- Elements Distribution: {dict(stats['element_counts'])}")
             
         except Exception as e:
-            logger.error(f"Error loading data: {str(e)}", exc_info=True)
+            logger.error(f"Error loading data: {str(e)}")
             raise
     
     def test_data_loading(self):
@@ -347,10 +267,19 @@ class InteractiveTest:
                 logger.error(f"Error during testing: {e}", exc_info=True)
                 print(f"Error occurred: {str(e)}")
 
-if __name__ == "__main__":
+def main():
+    """Main entry point for the interactive test."""
     try:
         tester = InteractiveTest()
         tester.interactive_session()
     except Exception as e:
         logger.error("Fatal error in main:", exc_info=True)
-        print(f"Fatal error: {str(e)}") 
+        print(f"Fatal error: {str(e)}")
+
+if __name__ == "__main__":
+    # Set up debug logging
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    main() 
