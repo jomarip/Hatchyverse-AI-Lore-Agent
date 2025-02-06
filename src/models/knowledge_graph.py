@@ -770,4 +770,26 @@ class HatchyKnowledgeGraph:
                 'attributes': {k: v for k, v in data.items() if k != 'type'}
             })
         
-        return relationships 
+        return relationships
+
+    def get_entity_count(self, filters: Dict[str, Any] = None) -> int:
+        """Count entities matching filter criteria."""
+        if not filters:
+            return len(self.entities)
+            
+        return sum(
+            1 for e in self.entities.values()
+            if all(
+                (k in e.get('attributes', {}) and e['attributes'][k] == v) or
+                (k == 'entity_type' and e.get('entity_type') == v) or
+                (k == 'generation' and str(v) == str(e.get('attributes', {}).get('generation', '')))
+                for k, v in filters.items()
+            )
+        )
+
+    def get_entities_by_generation(self, generation: str) -> List[Dict[str, Any]]:
+        """Get entities by generation."""
+        return [
+            entity for entity in self.entities.values()
+            if str(entity.get('attributes', {}).get('generation', '')) == str(generation)
+        ] 

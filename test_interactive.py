@@ -14,7 +14,21 @@ from langchain_community.vectorstores import Chroma
 from langchain.schema import Document
 
 # Configure logging
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(message)s',  # Simplified format
+    handlers=[
+        logging.StreamHandler()
+    ]
+)
+
+# Set specific loggers to higher levels to reduce noise
+logging.getLogger('httpx').setLevel(logging.WARNING)
+logging.getLogger('httpcore').setLevel(logging.WARNING)
+logging.getLogger('chromadb').setLevel(logging.WARNING)
+logging.getLogger('openai').setLevel(logging.WARNING)
+logging.getLogger('urllib3').setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 class InteractiveTest:
@@ -28,13 +42,11 @@ class InteractiveTest:
         self.data_dir = Path("data")
         if not self.data_dir.exists():
             raise ValueError(f"Data directory not found: {self.data_dir.absolute()}")
-        logger.debug(f"Data directory found: {self.data_dir.absolute()}")
         
         # Initialize embeddings
         self.embeddings = OpenAIEmbeddings(
             model=os.getenv('OPENAI_EMBEDDING_MODEL', 'text-embedding-3-small')
         )
-        logger.debug(f"Initialized embeddings with model: {os.getenv('OPENAI_EMBEDDING_MODEL', 'text-embedding-3-small')}")
         
         # Initialize LLM
         self.llm = ChatOpenAI(

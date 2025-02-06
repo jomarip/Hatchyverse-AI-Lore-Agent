@@ -80,58 +80,69 @@ class ContextualRetriever:
         self.max_relationship_depth = max_relationship_depth
         self.query_analyzer = QueryAnalyzer()
     
-    def get_context(
-        self,
-        query: str,
-        filters: Optional[Dict[str, Any]] = None
-    ) -> List[Dict[str, Any]]:
-        """Get relevant context for a query."""
-        try:
-            # Get context from vector store
-            vector_results = self.vector_store.similarity_search(
-                query,
-                k=self.max_results
-            )
+    def analyze_query(self, query: str) -> Dict[str, Any]:
+        """Analyze query type and extract parameters."""
+        # Check for count queries
+        query_lower = query.lower()
+        if 'how many' in query_lower:
+            filters = {}
             
-            # Get context from knowledge graph
-            kg_entities = self.knowledge_graph.search_entities(
-                query,
-                filters=filters,
-                limit=self.max_results
-            )
+            # Check for generation
+            if 'gen1' in query_lower or 'generation 1' in query_lower:
+                filters['generation'] = '1'
+            elif 'gen2' in query_lower or 'generation 2' in query_lower:
+                filters['generation'] = '2'
             
-            entity_contexts = []
-            seen_entities = set()
+            # Check for type
+            if 'monster' in query_lower or 'hatchy' in query_lower:
+                filters['entity_type'] = 'monster'
+                
+            return {
+                'query_type': 'count',
+                'filters': filters
+            }
             
-            # Get context for each entity found
-            for entity in kg_entities:
-                if entity['id'] not in seen_entities:
-                    context = self.get_entity_context(entity['id'])
-                    if context:
-                        entity_contexts.append(context)
-                        seen_entities.add(entity['id'])
+        # Default to standard query
+        return {
+            'query_type': 'standard',
+            'filters': {}
+        }
+
+    def get_context(self, query: str) -> List[Dict[str, Any]]:
+        """Get relevant context for query."""
+        analysis = self.analyze_query(query)
+        
+        if analysis['query_type'] == 'count':
+            count = self.knowledge_graph.get_entity_count(analysis['filters'])
+            return [{
+                'text_content': f"There are {count} entities matching the specified criteria.",
+                'metadata': {'type': 'count_result'},
+                'count': count,
+                'filters': analysis['filters']
+            }]
+        
+        # Original context retrieval logic
+        contexts = []
+        
+        # Get relevant documents from vector store
+        docs = self.vector_store.similarity_search(query, k=5)
+        for doc in docs:
+            context = {
+                'text_content': doc.page_content,
+                'metadata': doc.metadata
+            }
             
-            # Convert vector results to context format
-            for doc in vector_results:
-                if hasattr(doc, 'metadata') and 'entity_id' in doc.metadata:
-                    entity_id = doc.metadata['entity_id']
-                    if entity_id not in seen_entities:
-                        context = self.get_entity_context(entity_id)
-                        if context:
-                            entity_contexts.append(context)
-                            seen_entities.add(entity_id)
-                else:
-                    # Add as text context
-                    entity_contexts.append({
-                        'text_content': doc.page_content,
-                        'metadata': doc.metadata if hasattr(doc, 'metadata') else {}
-                    })
+            # If document has an entity_id, get entity details
+            if 'entity_id' in doc.metadata:
+                entity = self.knowledge_graph.get_entity_by_id(doc.metadata['entity_id'])
+                if entity:
+                    context['entity'] = entity
+                    # Get relationships for entity
+                    context['relationships'] = self.knowledge_graph.get_entity_relationships(doc.metadata['entity_id'])
             
-            return entity_contexts
-            
-        except Exception as e:
-            logger.error(f"Error getting context: {str(e)}")
-            return []
+            contexts.append(context)
+        
+        return contexts
     
     def get_entity_context(self, entity_id: str) -> Optional[Dict[str, Any]]:
         """Get context for a specific entity."""

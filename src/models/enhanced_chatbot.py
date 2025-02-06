@@ -62,6 +62,31 @@ class EnhancedChatbot:
             contexts = self.retriever.get_context(query)
             logger.debug(f"Retrieved {len(contexts)} context items")
             
+            # Check if this is a count query
+            if contexts and contexts[0].get('metadata', {}).get('type') == 'count_result':
+                count_info = contexts[0]
+                filters = count_info['filters']
+                count = count_info['count']
+                
+                # Format count response
+                if 'generation' in filters:
+                    response_text = f"There are {count} Generation {filters['generation']} Hatchies in the database."
+                    if count > 0:
+                        response_text += "\nWould you like to know more about any specific Gen{} Hatchy?".format(filters['generation'])
+                else:
+                    response_text = f"There are {count} Hatchies matching your criteria."
+                
+                return {
+                    "response": response_text,
+                    "validation": {
+                        'is_valid': True,
+                        'issues': [],
+                        'enhancements': [],
+                        'source_coverage': {'context_used': 1, 'coverage_score': 1.0}
+                    },
+                    "context_used": 1
+                }
+            
             # Format context for prompt
             formatted_context = []
             for ctx in contexts:
@@ -70,10 +95,13 @@ class EnhancedChatbot:
                     entity = ctx['entity']
                     text = f"Entity: {entity['name']}\n"
                     text += f"Type: {entity.get('entity_type', 'Unknown')}\n"
-                    if 'element' in entity:
-                        text += f"Element: {entity['element']}\n"
-                    if 'description' in entity:
-                        text += f"Description: {entity['description']}\n"
+                    
+                    # Get attributes safely
+                    attrs = entity.get('attributes', {})
+                    if 'element' in attrs:
+                        text += f"Element: {attrs['element']}\n"
+                    if 'description' in attrs:
+                        text += f"Description: {attrs['description']}\n"
                     
                     # Add relationships
                     if 'relationships' in ctx and ctx['relationships']:
