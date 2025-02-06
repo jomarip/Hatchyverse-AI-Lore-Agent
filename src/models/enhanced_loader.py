@@ -134,6 +134,7 @@ class EnhancedDataLoader:
         try:
             df = pd.read_csv(file_path)
             loaded_count = 0
+            loaded_entities = []
             
             # Clean up problematic column names
             df.columns = [col.strip() for col in df.columns]
@@ -181,6 +182,10 @@ class EnhancedDataLoader:
                         source=file_path
                     )
                     
+                    # Get the added entity and append to list
+                    entity = self.knowledge_graph.get_entity_by_id(entity_id)
+                    if entity:
+                        loaded_entities.append(entity)
                     loaded_count += 1
                     
                 except Exception as e:
@@ -188,10 +193,12 @@ class EnhancedDataLoader:
                     continue
                     
             logger.info(f"Loaded {loaded_count} entities from {file_path}")
+            return loaded_entities
             
         except Exception as e:
             logger.error(f"Error loading CSV file {file_path}: {str(e)}")
-            
+            return []
+
     def load_text_data(self, file_path: str, chunk_size: int = 1000):
         """Load text data with chunking and entity extraction."""
         try:
@@ -204,6 +211,7 @@ class EnhancedDataLoader:
             # Create unique prefix for chunks from this file
             file_prefix = Path(file_path).stem.replace(" ", "_")
             chunk_count = 0
+            loaded_chunks = []
             
             for i, chunk in enumerate(chunks):
                 try:
@@ -211,7 +219,7 @@ class EnhancedDataLoader:
                     chunk_name = f"{file_prefix}_{uuid.uuid4().hex[:8]}"
                     
                     # Create entity for chunk
-                    self.knowledge_graph.add_entity(
+                    entity_id = self.knowledge_graph.add_entity(
                         name=chunk_name,
                         entity_type="text_chunk",
                         attributes={
@@ -223,6 +231,11 @@ class EnhancedDataLoader:
                         metadata={'source': file_path},
                         source=file_path
                     )
+                    
+                    # Get the added entity and append to list
+                    entity = self.knowledge_graph.get_entity_by_id(entity_id)
+                    if entity:
+                        loaded_chunks.append(entity)
                     chunk_count += 1
                     
                 except Exception as e:
@@ -230,10 +243,12 @@ class EnhancedDataLoader:
                     continue
                     
             logger.info(f"Loaded {chunk_count} chunks from {file_path}")
+            return loaded_chunks
             
         except Exception as e:
             logger.error(f"Error loading text file {file_path}: {str(e)}")
-            
+            return []
+
     def _get_or_create_entity(self, name: str, entity_type: str) -> Optional[str]:
         """Get entity by name or create if it doesn't exist."""
         # Search for existing entity

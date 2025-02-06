@@ -11,6 +11,7 @@ from src.models.enhanced_loader import EnhancedDataLoader
 from src.models.enhanced_chatbot import EnhancedChatbot
 from src.models.contextual_retriever import ContextualRetriever
 from langchain_community.vectorstores import Chroma
+from langchain.schema import Document
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -67,11 +68,16 @@ class InteractiveTest:
         """Load all data using the enhanced loader."""
         try:
             loader = EnhancedDataLoader(self.knowledge_graph)
+            text_splitter = RecursiveCharacterTextSplitter(
+                chunk_size=1000,
+                chunk_overlap=200,
+                separators=["\n\n", "\n", ".", "!", "?", ",", " ", ""]
+            )
             
             # Load monster data
             gen1_path = self.data_dir / "Hatchy - Monster Data - gen 1.csv"
             if gen1_path.exists():
-                loader.load_csv_data(
+                gen1_entities = loader.load_csv_data(
                     str(gen1_path),
                     entity_type="monster",
                     relationship_mapping={
@@ -79,11 +85,28 @@ class InteractiveTest:
                         "habitat": "lives_in"
                     }
                 )
-                logger.info("Loaded Gen1 Hatchy data")
+                if gen1_entities:
+                    # Create documents for vector store
+                    docs = []
+                    for entity in gen1_entities:
+                        text = f"Name: {entity['name']}\n"
+                        text += f"Generation: 1\n"
+                        text += f"Type: {entity.get('attributes', {}).get('element', 'Unknown')}\n"
+                        text += f"Description: {entity.get('attributes', {}).get('description', '')}\n"
+                        chunks = text_splitter.split_text(text)
+                        for chunk in chunks:
+                            docs.append(Document(
+                                page_content=chunk,
+                                metadata={"entity_id": entity["id"], "type": "monster", "generation": "1"}
+                            ))
+                    
+                    if docs:
+                        self.vector_store.add_documents(docs)
+                    logger.info("Loaded Gen1 Hatchy data")
             
             gen2_path = self.data_dir / "Hatchy - Monster Data - gen 2.csv"
             if gen2_path.exists():
-                loader.load_csv_data(
+                gen2_entities = loader.load_csv_data(
                     str(gen2_path),
                     entity_type="monster",
                     relationship_mapping={
@@ -91,25 +114,69 @@ class InteractiveTest:
                         "habitat": "lives_in"
                     }
                 )
-                logger.info("Loaded Gen2 Hatchy data")
+                if gen2_entities:
+                    # Create documents for vector store
+                    docs = []
+                    for entity in gen2_entities:
+                        text = f"Name: {entity['name']}\n"
+                        text += f"Generation: 2\n"
+                        text += f"Type: {entity.get('attributes', {}).get('element', 'Unknown')}\n"
+                        text += f"Description: {entity.get('attributes', {}).get('description', '')}\n"
+                        chunks = text_splitter.split_text(text)
+                        for chunk in chunks:
+                            docs.append(Document(
+                                page_content=chunk,
+                                metadata={"entity_id": entity["id"], "type": "monster", "generation": "2"}
+                            ))
+                    
+                    if docs:
+                        self.vector_store.add_documents(docs)
+                    logger.info("Loaded Gen2 Hatchy data")
             
             # Load world data
             world_path = self.data_dir / "Hatchy World _ world design.txt"
             if world_path.exists():
-                loader.load_text_data(str(world_path))
-                logger.info("Loaded world design data")
+                with open(world_path, 'r', encoding='utf-8') as f:
+                    text = f.read()
+                chunks = text_splitter.split_text(text)
+                docs = [Document(page_content=chunk, metadata={"type": "world_design"}) for chunk in chunks]
+                if docs:
+                    self.vector_store.add_documents(docs)
+                
+                # Load into knowledge graph
+                world_entities = loader.load_text_data(str(world_path))
+                if world_entities:
+                    logger.info(f"Loaded {len(world_entities)} world design entities")
             
             # Load story data
             story_path = self.data_dir / "Hatchy World Comic_ Chaos saga.txt"
             if story_path.exists():
-                loader.load_text_data(str(story_path))
-                logger.info("Loaded Chaos saga data")
+                with open(story_path, 'r', encoding='utf-8') as f:
+                    text = f.read()
+                chunks = text_splitter.split_text(text)
+                docs = [Document(page_content=chunk, metadata={"type": "story"}) for chunk in chunks]
+                if docs:
+                    self.vector_store.add_documents(docs)
+                
+                # Load into knowledge graph
+                story_entities = loader.load_text_data(str(story_path))
+                if story_entities:
+                    logger.info(f"Loaded {len(story_entities)} story entities")
             
             # Load eco presentation data
             eco_path = self.data_dir / "Hatchyverse Eco Presentation v3.txt"
             if eco_path.exists():
-                loader.load_text_data(str(eco_path))
-                logger.info("Loaded eco presentation data")
+                with open(eco_path, 'r', encoding='utf-8') as f:
+                    text = f.read()
+                chunks = text_splitter.split_text(text)
+                docs = [Document(page_content=chunk, metadata={"type": "eco_presentation"}) for chunk in chunks]
+                if docs:
+                    self.vector_store.add_documents(docs)
+                
+                # Load into knowledge graph
+                eco_entities = loader.load_text_data(str(eco_path))
+                if eco_entities:
+                    logger.info(f"Loaded {len(eco_entities)} eco presentation entities")
             
             # Log knowledge graph statistics
             stats = self.knowledge_graph.get_statistics()

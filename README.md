@@ -64,6 +64,27 @@ hatchyverse/
 └── README.md                       # This file
 ```
 
+### Query Analysis
+The QueryAnalyzer class handles different query types including:
+- Generation-specific queries (e.g., "gen1", "generation 2")
+- Element-based queries (fire, water, plant, etc.)
+- Relationship queries (mountable, evolution, habitat, ability)
+- Attribute-based queries (size, stage)
+
+### Context Retrieval
+The ContextualRetriever combines multiple data sources:
+- Vector store for semantic search
+- Knowledge graph for entity relationships
+- Filtered retrieval based on query type
+- Timeline and story context
+
+### Filtered Retrieval
+The FilteredRetriever specifically handles:
+- Character/Monster information
+- Item/Equipment queries
+- Story/Event queries
+- Location-based queries
+
 ## Setup and Configuration
 
 1. Create a virtual environment:
@@ -276,6 +297,66 @@ Each test category ensures:
    - Graceful error management
    - Informative error messages
    - System stability under invalid inputs
+
+### Expected Test Coverage
+
+The test suite aims to maintain comprehensive coverage across all core components:
+
+#### 1. Knowledge Graph (90-100% coverage)
+- Entity creation, retrieval, and deletion
+- Relationship management
+- Attribute validation
+- Search functionality
+- Data consistency checks
+- Index management
+
+#### 2. Data Loading (85-95% coverage)
+- CSV file processing
+- JSON data handling
+- Text chunk processing
+- Relationship extraction
+- Error handling
+- Type conversion
+- Data validation
+
+#### 3. Contextual Retrieval (85-95% coverage)
+- Query analysis
+- Context gathering
+- Vector search integration
+- Entity network analysis
+- Timeline generation
+- Relationship path finding
+- Filter application
+
+#### 4. Response Generation (80-90% coverage)
+- Context integration
+- Response formatting
+- Validation checks
+- Enhancement suggestions
+- Error handling
+- Source coverage tracking
+
+#### 5. Integration Tests (75-85% coverage)
+- End-to-end query processing
+- Cross-component interaction
+- Data flow validation
+- Error propagation
+- State management
+- Performance monitoring
+
+#### 6. Edge Cases (70-80% coverage)
+- Invalid input handling
+- Boundary conditions
+- Resource limitations
+- Concurrent operations
+- Network issues
+- Data inconsistencies
+
+Key Coverage Metrics:
+- Line Coverage: Minimum 80% overall
+- Branch Coverage: Minimum 75% overall
+- Function Coverage: Minimum 90% overall
+- Critical Path Coverage: 100% for core functionality
 
 ## Usage
 

@@ -6,133 +6,10 @@ from langchain_core.prompts import ChatPromptTemplate
 from .knowledge_graph import HatchyKnowledgeGraph
 from .contextual_retriever import ContextualRetriever
 from .enhanced_loader import EnhancedDataLoader
+from .response_validator import ResponseValidator
+from langchain.vectorstores import VectorStore
 
 logger = logging.getLogger(__name__)
-
-class ResponseValidator:
-    """Validate and enhance chatbot responses."""
-    
-    def __init__(self, knowledge_graph: HatchyKnowledgeGraph):
-        self.knowledge_graph = knowledge_graph
-    
-    def _extract_entity_mentions(self, text: str) -> List[Dict[str, Any]]:
-        """Extract entity mentions from text."""
-        mentions = []
-        text_lower = text.lower()
-        
-        for entity_id, entity in self.knowledge_graph.entities.items():
-            name = entity.get('name', '')
-            if name and name.lower() in text_lower:
-                mentions.append({
-                    'id': entity_id,
-                    'name': name,
-                    'attributes': entity.get('attributes', {})
-                })
-        
-        return mentions
-    
-    def validate(self, response: str, context: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Validate response against knowledge graph."""
-        validation_results = {
-            'is_valid': True,
-            'issues': [],
-            'enhancements': [],
-            'source_coverage': self._check_source_coverage(response, context)
-        }
-        
-        # Check factual consistency
-        consistency_check = self._check_factual_consistency(response, context)
-        if not consistency_check['is_consistent']:
-            validation_results['is_valid'] = False
-            validation_results['issues'].extend(consistency_check['issues'])
-        
-        # Check for potential enhancements
-        enhancements = self._suggest_enhancements(response, context)
-        validation_results['enhancements'] = enhancements
-        
-        return validation_results
-    
-    def _check_factual_consistency(
-        self,
-        response: str,
-        context: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
-        """Check response consistency with knowledge graph."""
-        result = {
-            'is_consistent': True,
-            'issues': []
-        }
-        
-        # Extract entity mentions
-        entity_mentions = self._extract_entity_mentions(response)
-        
-        # Check each mentioned entity against knowledge graph
-        for entity in entity_mentions:
-            graph_entity = self.knowledge_graph.get_entity_by_id(entity['id'])
-            if graph_entity:
-                # Check attribute consistency
-                for attr, value in entity['attributes'].items():
-                    if attr in graph_entity and graph_entity[attr] != value:
-                        result['is_consistent'] = False
-                        result['issues'].append({
-                            'type': 'attribute_mismatch',
-                            'entity': entity['name'],
-                            'attribute': attr,
-                            'response_value': value,
-                            'actual_value': graph_entity[attr]
-                        })
-        
-        return result
-    
-    def _check_source_coverage(
-        self,
-        response: str,
-        context: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
-        """Check how well the response covers the provided context."""
-        return {
-            'context_used': len(context),
-            'coverage_score': self._calculate_coverage_score(response, context)
-        }
-    
-    def _suggest_enhancements(
-        self,
-        response: str,
-        context: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """Suggest potential response enhancements."""
-        suggestions = []
-        
-        # Check for unused relevant context
-        unused_context = self._find_unused_context(response, context)
-        if unused_context:
-            suggestions.append({
-                'type': 'additional_context',
-                'context': unused_context,
-                'suggestion': 'Consider including information about: ' + 
-                            ', '.join(c['entity']['name'] for c in unused_context)
-            })
-        
-        # Check for relationship opportunities
-        relationship_suggestions = self._suggest_relationships(response, context)
-        suggestions.extend(relationship_suggestions)
-        
-        return suggestions
-    
-    def _calculate_coverage_score(
-        self,
-        response: str,
-        context: List[Dict[str, Any]]
-    ) -> float:
-        """Calculate how well the response covers the context."""
-        # Simple implementation - can be enhanced
-        covered = 0
-        for ctx in context:
-            entity_name = ctx['entity'].get('name', '').lower()
-            if entity_name and entity_name in response.lower():
-                covered += 1
-        
-        return covered / len(context) if context else 0.0
 
 class EnhancedChatbot:
     """Enhanced chatbot with knowledge graph integration."""
@@ -141,7 +18,7 @@ class EnhancedChatbot:
         self,
         llm: BaseLLM,
         knowledge_graph: HatchyKnowledgeGraph,
-        vector_store: Any
+        vector_store: VectorStore
     ):
         self.llm = llm
         self.knowledge_graph = knowledge_graph
@@ -149,11 +26,27 @@ class EnhancedChatbot:
         self.validator = ResponseValidator(knowledge_graph)
         self.data_loader = EnhancedDataLoader(knowledge_graph)
         
-        # Initialize prompt templates
-        self.qa_template = ChatPromptTemplate.from_messages([
-            ("system", self._get_system_prompt()),
-            ("human", "{query}")
-        ])
+        # Enhanced system prompt
+        self.qa_template = ChatPromptTemplate.from_template("""
+            You are a Hatchyverse Lore Expert. Follow these rules:
+            1. ONLY use information from the provided context
+            2. Format responses in a Fandom Wiki style with clear sections
+            3. NEVER invent or assume details not in context
+            4. Cite specific sources when available
+            5. Use proper terminology (e.g. "Hatchy" not "creature" or "monster")
+            6. Include relevant relationships and connections
+            7. If information is not in context, say "Based on available information, [answer]"
+            8. Format numbers and statistics clearly
+            9. Use bullet points for lists
+            10. Include a "Trivia" section if interesting facts are available
+            
+            Question: {query}
+            
+            Context:
+            {context}
+            
+            Answer in a clear, well-structured Fandom Wiki style.
+        """)
     
     def load_data(self, file_path: str):
         """Load data from file."""
@@ -166,19 +59,45 @@ class EnhancedChatbot:
         """Generate response with enhanced context awareness."""
         try:
             # Get relevant context
-            context = self.retriever.get_context(query)
-            logger.debug(f"Retrieved {len(context)} context items")
+            contexts = self.retriever.get_context(query)
+            logger.debug(f"Retrieved {len(contexts)} context items")
             
-            # Format prompt with context
-            prompt = self._format_prompt(query, context)
+            # Format context for prompt
+            formatted_context = []
+            for ctx in contexts:
+                if 'entity' in ctx:
+                    # Format entity context
+                    entity = ctx['entity']
+                    text = f"Entity: {entity['name']}\n"
+                    text += f"Type: {entity.get('entity_type', 'Unknown')}\n"
+                    if 'element' in entity:
+                        text += f"Element: {entity['element']}\n"
+                    if 'description' in entity:
+                        text += f"Description: {entity['description']}\n"
+                    
+                    # Add relationships
+                    if 'relationships' in ctx and ctx['relationships']:
+                        text += "Relationships:\n"
+                        for rel in ctx['relationships']:
+                            text += f"- {rel['type']}: {rel['target_name']}\n"
+                    
+                    formatted_context.append(text)
+                elif 'text_content' in ctx:
+                    # Format text content
+                    formatted_context.append(f"Source: {ctx['metadata'].get('type', 'Unknown')}\n{ctx['text_content']}")
+            
+            context_text = "\n\n".join(formatted_context) if formatted_context else "No specific context found."
             
             # Generate response
             chain = self.qa_template | self.llm | StrOutputParser()
-            response_text = chain.invoke({"query": prompt})
+            response_text = chain.invoke({
+                "query": query,
+                "context": context_text
+            })
             
             # Validate response
             try:
-                validation = self.validator.validate(response_text, context)
+                validation = self.validator.validate(response_text, contexts)
             except Exception as ve:
                 logger.error(f"Validation error: {str(ve)}")
                 validation = {
@@ -192,7 +111,7 @@ class EnhancedChatbot:
             return {
                 "response": response_text,
                 "validation": validation,
-                "context_used": len(context)
+                "context_used": len(contexts)
             }
             
         except Exception as e:
@@ -221,35 +140,31 @@ class EnhancedChatbot:
     
     def _format_prompt(self, query: str, context: List[Dict[str, Any]]) -> str:
         """Format prompt with context."""
-        prompt_parts = [
-            "Question: " + query,
-            "\nContext:"
-        ]
+        prompt_parts = ["Question: " + query + "\n\nContext:"]
         
-        # Add primary context
         for ctx in context:
-            entity = ctx['entity']
-            source_info = f"From {entity.get('_metadata', {}).get('source_file', 'unknown source')}"
-            
-            # Add entity information
-            if 'name' in entity:
-                prompt_parts.append(f"\n{source_info}:")
-                prompt_parts.append(f"Name: {entity['name']}")
+            if 'entity' in ctx:
+                entity = ctx['entity']
+                prompt_parts.append(f"\n- {entity['name']} ({entity.get('entity_type', 'Unknown Type')})")
                 if 'description' in entity:
-                    prompt_parts.append(f"Description: {entity['description']}")
+                    prompt_parts.append(f"  Description: {entity['description']}")
+                if 'attributes' in entity:
+                    attrs = [f"{k}: {v}" for k, v in entity['attributes'].items() 
+                            if k not in ['name', 'description']]
+                    if attrs:
+                        prompt_parts.append(f"  Attributes: {', '.join(attrs)}")
                 
-                # Add relationships if present
-                if 'related_entities' in ctx:
-                    relationships = ctx['related_entities']
-                    if relationships:
-                        prompt_parts.append("Related information:")
-                        for rel in relationships:
-                            prompt_parts.append(f"- {rel['relationship']}: {rel['entity']['name']}")
+                # Add relationship information
+                if 'relationships' in ctx:
+                    rels = []
+                    for rel in ctx['relationships']:
+                        target = rel.get('entity', {})
+                        rels.append(f"{target.get('name', 'Unknown')} ({rel.get('relationship', 'related')})")
+                    if rels:
+                        prompt_parts.append(f"  Related to: {', '.join(rels)}")
             
-            # Add text content if present
-            elif 'content' in entity:
-                prompt_parts.append(f"\n{source_info}:")
-                prompt_parts.append(entity['content'])
+            elif 'text_content' in ctx:
+                prompt_parts.append(f"\n- {ctx['text_content']}")
         
         return "\n".join(prompt_parts)
     
