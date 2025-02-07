@@ -51,7 +51,16 @@ class HatchyKnowledgeGraph:
             'allied_with': {'inverse': 'allied_with', 'confidence_threshold': 0.8},  # Symmetric
             'opposes': {'inverse': 'opposed_by', 'confidence_threshold': 0.8},
             'controls': {'inverse': 'controlled_by', 'confidence_threshold': 0.8},
-            'commands': {'inverse': 'commanded_by', 'confidence_threshold': 0.8}
+            'commands': {'inverse': 'commanded_by', 'confidence_threshold': 0.8},
+            'hatches_from': {'inverse': 'hatches_into', 'confidence_threshold': 0.9},  # Added for egg hatching
+            'lives_in': {'inverse': 'habitat_of', 'confidence_threshold': 0.8},
+            'belongs_to': {'inverse': 'owns', 'confidence_threshold': 0.8},
+            'trades_with': {'inverse': 'trades_with', 'confidence_threshold': 0.8},  # Symmetric
+            'borders': {'inverse': 'borders', 'confidence_threshold': 0.9},  # Symmetric
+            'has_capital': {'inverse': 'capital_of', 'confidence_threshold': 0.9},
+            'leads': {'inverse': 'led_by', 'confidence_threshold': 0.9},  # Added for leadership
+            'serves': {'inverse': 'served_by', 'confidence_threshold': 0.8},  # Added for service relationships
+            'mentors': {'inverse': 'mentored_by', 'confidence_threshold': 0.9}  # Added for mentorship
         }
         
         # Add indexes
@@ -73,7 +82,8 @@ class HatchyKnowledgeGraph:
         # Predefine core elements
         self.core_elements = {
             'fire', 'water', 'plant', 'void', 'light', 'dark',
-            'electric', 'earth', 'air', 'metal', 'chaos', 'order'
+            'electric', 'earth', 'air', 'metal', 'chaos', 'order',
+            'both', 'lunar', 'solar'  # Added special element types
         }
         self._init_core_entities()
         
@@ -92,14 +102,34 @@ class HatchyKnowledgeGraph:
                 
                 if not existing:
                     logger.debug(f"Creating core element: {element_name}")
+                    
+                    # Special handling for dual/special elements
+                    attributes = {
+                        "name": element_name,
+                        "symbol": self._get_element_symbol(element),
+                        "is_core_element": True
+                    }
+                    
+                    if element == 'both':
+                        attributes.update({
+                            "combines": ["Light", "Dark"],
+                            "is_dual_element": True
+                        })
+                    elif element == 'lunar':
+                        attributes.update({
+                            "related_to": "Dark",
+                            "is_special_element": True
+                        })
+                    elif element == 'solar':
+                        attributes.update({
+                            "related_to": "Light",
+                            "is_special_element": True
+                        })
+                    
                     self.add_entity(
                         name=element_name,
                         entity_type="element",
-                        attributes={
-                            "name": element_name,
-                            "symbol": self._get_element_symbol(element),
-                            "is_core_element": True
-                        },
+                        attributes=attributes,
                         metadata={'core_element': True}
                     )
                     logger.debug(f"Successfully created core element: {element_name}")
@@ -112,9 +142,10 @@ class HatchyKnowledgeGraph:
             'fire': '🔥', 'water': '💧', 'plant': '🌿',
             'void': '🌌', 'light': '✨', 'dark': '🌑',
             'electric': '⚡', 'earth': '🌍', 'air': '🌪️',
-            'metal': '⚙️', 'chaos': '🌀', 'order': '⚖️'
+            'metal': '⚙️', 'chaos': '🌀', 'order': '⚖️',
+            'both': '☯️', 'lunar': '🌙', 'solar': '☀️'  # Added special element symbols
         }
-        return symbols.get(element, '❓')
+        return symbols.get(element.lower(), '❓')
 
     def _validate_entity_data(self, data: Dict[str, Any]) -> Tuple[bool, List[str]]:
         """Validate entity data before insertion."""
@@ -195,19 +226,33 @@ class HatchyKnowledgeGraph:
 
     def _update_indexes(self, entity_id: str, entity_data: Dict[str, Any]):
         """Update all indexes with new entity data."""
-        # Update name index
-        self._name_index[entity_data['name']] = entity_id
-        
-        # Update type index
-        entity_type = entity_data['entity_type']
-        if entity_type not in self._type_index:
-            self._type_index[entity_type] = set()
-        self._type_index[entity_type].add(entity_id)
-        
-        # Update attribute index
-        for attr, value in entity_data.get('attributes', {}).items():
-            if isinstance(value, (str, int, float, bool)):
-                self._attribute_index[attr][str(value)].add(entity_id)
+        try:
+            # Handle both dictionary and sequence types
+            if isinstance(entity_data, (list, tuple)):
+                name = str(entity_data[0]) if len(entity_data) > 0 else None
+                entity_type = str(entity_data[1]) if len(entity_data) > 1 else None
+                attributes = entity_data[2] if len(entity_data) > 2 else {}
+            else:
+                name = entity_data.get('name')
+                entity_type = entity_data.get('entity_type')
+                attributes = entity_data.get('attributes', {})
+
+            if name:
+                self._name_index[name.lower()] = entity_id
+            
+            if entity_type:
+                if entity_type not in self._type_index:
+                    self._type_index[entity_type] = set()
+                self._type_index[entity_type].add(entity_id)
+            
+            # Update attribute index
+            if isinstance(attributes, dict):
+                for attr, value in attributes.items():
+                    if isinstance(value, (str, int, float, bool)):
+                        self._attribute_index[attr][str(value)].add(entity_id)
+                        
+        except Exception as e:
+            logger.error(f"Error updating indexes for entity {entity_id}: {str(e)}")
 
     def _remove_from_indexes(self, entity_id: str):
         """Remove entity from all indexes."""
@@ -465,37 +510,52 @@ class HatchyKnowledgeGraph:
         attributes: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None
     ) -> Optional[str]:
-        """Add a relationship between two entities with improved fallback handling."""
+        """Add a relationship between two entities with improved type handling."""
         try:
             # Validate relationship type
             if not self.is_valid_type(relationship_type):
                 logger.warning(f"Invalid relationship type: {relationship_type}")
                 return None
 
-            # Handle source entity
-            if source_id not in self.entities:
-                logger.warning(f"Creating fallback source entity: {source_id}")
-                source_id = self.add_entity(
+            # Handle special cases where target_id is a string name instead of an ID
+            if relationship_type in ['has_element', 'hatches_from']:
+                # For elements and hatching, resolve target by name
+                target_entity = self.resolve_or_create_entity(
+                    name=target_id,  # In this case target_id is actually the name
+                    entity_type='element' if relationship_type == 'has_element' else 'egg_type',
+                    attributes={
+                        'name': target_id,
+                        'is_core_element': target_id.lower() in self.core_elements
+                    } if relationship_type == 'has_element' else {'name': target_id}
+                )
+                target_id = target_entity  # Use the resolved/created entity ID
+
+            # Validate and resolve source entity
+            source_entity = self.get_entity(source_id)  # Use get_entity which handles type conversion
+            if not source_entity:
+                logger.warning(f"Source entity {source_id} not found, attempting resolution")
+                source_id = self.resolve_or_create_entity(
                     name=source_id,
                     entity_type='auto_source',
                     attributes={'auto_created': True},
-                    metadata={'source': 'fallback_creation'}
+                    metadata={'source': 'relationship_resolution'}
                 )
 
-            # Handle target entity
-            if target_id not in self.entities:
-                logger.warning(f"Creating fallback target entity: {target_id}")
-                target_id = self.add_entity(
+            # Get or create target entity (for non-special cases)
+            target_entity = self.get_entity(target_id)  # Use get_entity which handles type conversion
+            if not target_entity:
+                logger.warning(f"Target entity {target_id} not found, attempting resolution")
+                target_id = self.resolve_or_create_entity(
                     name=target_id,
                     entity_type='auto_target',
                     attributes={'auto_created': True},
-                    metadata={'source': 'fallback_creation'}
+                    metadata={'source': 'relationship_resolution'}
                 )
 
             # Generate relationship ID
             relationship_id = str(uuid.uuid4())
             
-            # Create relationship data
+            # Create relationship data with proper confidence
             relationship_data = {
                 'id': relationship_id,
                 'source_id': source_id,
@@ -505,7 +565,7 @@ class HatchyKnowledgeGraph:
                 'metadata': {
                     **(metadata or {}),
                     'created_at': datetime.now().isoformat(),
-                    'confidence': metadata.get('confidence', 1.0) if metadata else 1.0
+                    'confidence': self._calculate_confidence(relationship_type, metadata)
                 }
             }
 
@@ -527,11 +587,12 @@ class HatchyKnowledgeGraph:
             
             # Update statistics
             self._stats['total_relationships'] += 1
-            self._stats['relationship_counts'][relationship_type] += 1
+            self._stats['relationship_counts'][relationship_type] = \
+                self._stats['relationship_counts'].get(relationship_type, 0) + 1
 
             # Log relationship creation with entity names for clarity
-            source_name = self.entities[source_id]['name']
-            target_name = self.entities[target_id]['name']
+            source_name = self.get_entity_name(source_id)
+            target_name = self.get_entity_name(target_id)
             logger.info(f"Created relationship: {source_name} -{relationship_type}-> {target_name}")
             
             return relationship_id
@@ -540,9 +601,52 @@ class HatchyKnowledgeGraph:
             logger.error(f"Error creating relationship: {str(e)}")
             return None
 
+    def _calculate_confidence(self, relationship_type: str, metadata: Optional[Dict[str, Any]] = None) -> float:
+        """Calculate confidence score for a relationship."""
+        base_confidence = self.relationship_registry.get(relationship_type, {}).get('confidence_threshold', 0.5)
+        
+        # If metadata contains explicit confidence, use that
+        if metadata and 'confidence' in metadata:
+            return float(metadata['confidence'])
+            
+        # Special case for mentorship relationships
+        if relationship_type == 'mentors':
+            return 0.9
+            
+        return base_confidence
+
     def get_entity(self, entity_id: str) -> Optional[Dict[str, Any]]:
-        """Get entity by ID."""
-        return self.entities.get(entity_id)
+        """Get entity by ID with safe type handling."""
+        try:
+            entity = self.entities.get(entity_id)
+            if entity is None:
+                return None
+                
+            # Handle case where entity is a sequence instead of dict
+            if isinstance(entity, (list, tuple)):
+                # Convert sequence to dictionary format
+                return {
+                    'id': entity_id,
+                    'name': str(entity[0]) if len(entity) > 0 else 'Unknown',
+                    'entity_type': str(entity[1]) if len(entity) > 1 else 'unknown',
+                    'attributes': entity[2] if len(entity) > 2 else {},
+                    'metadata': entity[3] if len(entity) > 3 else {}
+                }
+            elif isinstance(entity, dict):
+                return entity
+            else:
+                # Handle unexpected type
+                logger.warning(f"Unexpected entity type for {entity_id}: {type(entity)}")
+                return {
+                    'id': entity_id,
+                    'name': str(entity),
+                    'entity_type': 'unknown',
+                    'attributes': {},
+                    'metadata': {}
+                }
+        except Exception as e:
+            logger.error(f"Error getting entity {entity_id}: {str(e)}")
+            return None
 
     def get_entity_by_id(self, entity_id: str) -> Optional[Dict[str, Any]]:
         """Get entity by ID (alias for get_entity)."""
@@ -1052,3 +1156,86 @@ class HatchyKnowledgeGraph:
     def is_valid_type(self, relationship_type: str) -> bool:
         """Check if a relationship type is valid."""
         return relationship_type in self.relationship_registry 
+
+    def resolve_or_create_entity(
+        self,
+        name: str,
+        entity_type: str,
+        attributes: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """Find or create an entity with the given name and type."""
+        if not name:
+            raise ValueError("Entity name cannot be empty")
+            
+        name = str(name).strip()
+        
+        # First try to find existing entity by name and type
+        for entity_id, entity in self.entities.items():
+            # Handle both dictionary and sequence types
+            entity_name = None
+            entity_type_val = None
+            
+            if isinstance(entity, dict):
+                entity_name = entity.get('name', '').lower()
+                entity_type_val = entity.get('entity_type')
+            elif isinstance(entity, (list, tuple)):
+                entity_name = str(entity[0]).lower() if len(entity) > 0 else None
+                entity_type_val = str(entity[1]) if len(entity) > 1 else None
+            
+            if entity_name == name.lower() and entity_type_val == entity_type:
+                return entity_id
+            
+        # Create new entity if not found
+        merged_attributes = {
+            'auto_created': True,
+            'name': name,  # Ensure name is included in attributes
+            **(attributes or {})
+        }
+        
+        merged_metadata = {
+            'source': 'relationship_resolution',
+            'created_at': datetime.now().isoformat(),
+            **(metadata or {})
+        }
+        
+        # Special handling for element entities
+        if entity_type == 'element':
+            merged_attributes.update({
+                'name': name.capitalize(),
+                'is_core_element': name.lower() in self.core_elements,
+                'symbol': self._get_element_symbol(name)
+            })
+        
+        # Special handling for egg type entities
+        elif entity_type == 'egg_type':
+            merged_attributes.update({
+                'name': name.capitalize(),
+                'is_special_type': name.lower() in ['both', 'lunar', 'solar']
+            })
+        
+        entity_id = str(uuid.uuid4())
+        # Always store as dictionary for consistency
+        self.entities[entity_id] = {
+            'id': entity_id,
+            'name': name,
+            'entity_type': entity_type,
+            'attributes': merged_attributes,
+            'metadata': merged_metadata
+        }
+        
+        # Update indexes
+        self._update_indexes(entity_id, self.entities[entity_id])
+        
+        return entity_id
+
+    def get_entity_name(self, entity_id: str) -> str:
+        """Safely get entity name with fallback."""
+        entity = self.get_entity(entity_id)  # Use get_entity which handles type conversion
+        if not entity:
+            return f"Unknown Entity ({entity_id})"
+        return entity.get('name', f"Unnamed Entity ({entity_id})")
+
+    def get_entity(self, entity_id: str) -> Optional[Dict[str, Any]]:
+        """Get entity by ID."""
+        return self.entities.get(entity_id) 

@@ -224,7 +224,7 @@ class AdaptiveRelationshipExtractor:
         """Generate a regex pattern from example text."""
         # Special case for tutelage patterns
         if 'tutelage of' in example.lower():
-            return r"(?:under|trained under)\s+the\s+tutelage\s+of\s+([\w\s]+)"
+            return r"(?:under|trained under|guided by)\s+the\s+tutelage\s+of\s+([\w\s]+)"
             
         # Split on the last occurrence of a preposition
         prepositions = r'\b(of|from|by|with)\b'
@@ -251,12 +251,15 @@ class AdaptiveRelationshipExtractor:
                 logger.debug(f"Creating pattern from context: '{relationship.context}'")
                 logger.debug(f"Generated pattern: {pattern}")
                 
+                # For tutelage patterns, always use mentors relationship type
+                rel_type = 'mentors' if 'tutelage' in relationship.context.lower() else relationship.type
+                
                 # Register new pattern
                 new_pattern = RelationshipPattern(
                     id=pattern_id,
                     pattern=pattern,
-                    relationship_type='mentors' if 'tutelage' in relationship.context.lower() else relationship.type,
-                    confidence_base=0.75,
+                    relationship_type=rel_type,
+                    confidence_base=0.9 if rel_type == 'mentors' else 0.75,
                     source="learned"
                 )
                 

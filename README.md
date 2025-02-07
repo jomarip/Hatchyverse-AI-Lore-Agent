@@ -122,9 +122,14 @@ DEEPSEEK_MODEL_NAME=deepseek-chat
 
 3. **Data Preparation**
 Place your data files in the `data` directory:
-- `monsters.csv`: Monster/creature data
-- `items.csv`: Equipment and items
-- `world_design.txt`: World building and locations
+- `monsters.csv`: Contains monster/creature stats, abilities, elements, and evolution chains
+- `items.csv`: Equipment stats, effects, rarity levels, and crafting requirements
+- `world_design.txt`: World lore, location descriptions, and regional histories
+- `story.txt`: Main storyline events, character interactions, and plot developments
+- `factions.json`: Faction relationships, alliances, and hierarchies
+- `characters.json`: Character profiles, backstories, and relationships
+- `elements.yaml`: Elemental types, strengths/weaknesses, and special properties
+- `timeline.json`: Chronological events and historical milestones
 
 4. **Running the Application**
 ```bash
@@ -133,118 +138,54 @@ uvicorn src.api.main:app --reload
 
 ## Testing
 
-The project includes a comprehensive test suite with multiple testing approaches:
+The Hatchyverse system uses a multi-stage testing approach to ensure proper functionality. Follow these steps in order:
 
-### 1. Unit Tests
-Run the unit test suite:
+### 1. Build Knowledge Graph
+First, build and initialize the knowledge graph:
 ```bash
-python3 -m pytest tests/test_components.py
+python scripts/build_knowledge_graph.py
 ```
+This will:
+- Load all data from the data directory
+- Build the initial knowledge graph
+- Create relationship mappings
+- Save the graph to `knowledge_graphs/knowledge_graph_latest.json`
 
-The `test_components.py` file contains core unit tests that verify the functionality of key system components:
-
-#### 1. Knowledge Graph Tests
-- **test_knowledge_graph_basic**: Tests fundamental knowledge graph operations
-  - Entity creation and retrieval
-  - Relationship creation and validation
-  - Entity type management
-  - Basic search functionality
-
-#### 2. Data Loading Tests
-- **test_enhanced_loader**: Verifies the data loading system
-  - Entity creation with attributes
-  - Relationship mapping
-  - Automatic target entity creation
-  - Data validation and error handling
-
-#### 3. Contextual Retrieval Tests
-- **test_contextual_retriever**: Tests the context retrieval system
-  - Entity-based context extraction
-  - Query-based information retrieval
-  - Context relevance verification
-  - Integration with vector store
-
-#### 4. Chatbot Tests
-- **test_enhanced_chatbot**: Validates the chatbot functionality
-  - Response generation
-  - Context integration
-  - Response validation
-  - Error handling
-
-#### 5. Query Tests
-
-Run the retrieval system tests:
+### 2. Run Component Tests
+Next, run the core component tests:
 ```bash
-python3 run_tests.py
+python -m unittest tests/test_components.py -v
 ```
-- **test_generation_query**: Tests generation-based entity queries
-  - Filtering by generation
-  - Generation metadata handling
-  - Cache utilization
+This validates:
+- Knowledge graph operations
+- Data loading functionality
+- Entity relationships
+- Basic query handling
 
-- **test_element_query**: Validates element-based filtering
-  - Element type filtering
-  - Attribute-based search
-  - Filter combination handling
+### 3. Run Relationship Tests
+Test the enhanced relationship extraction:
+```bash
+python -m unittest tests/test_relationship_extraction.py -v
+```
+This verifies:
+- Data cleaning
+- Relationship extraction
+- Pattern learning
+- Entity resolution
+- Relationship confidence scoring
 
-#### 6. Relationship Tests
-- **test_relationship_query**: Tests relationship management
-  - Relationship creation
-  - Relationship type validation
-  - Bidirectional relationship handling
-  - Relationship attribute management
+### 4. Run Interactive Tests
+Finally, test the chatbot with predefined queries:
+```bash
+python test_interactive.py
+```
+This provides:
+- Test suite for common queries
+- Interactive chat testing
+- Relationship validation
+- Response verification
 
-#### 7. Error Handling Tests
-- **test_error_handling**: Verifies system robustness
-  - Invalid entity handling
-  - Missing relationship handling
-  - Invalid query responses
-  - Error message validation
-
-### Test Setup and Configuration
-
-The test suite uses a controlled test environment with:
-
-1. **Test Data**:
-   ```python
-   test_monster_data = {
-       "name": "TestHatchy",
-       "generation": "1",
-       "element": "Fire",
-       "evolves_from": "None",
-       "habitat": "Volcano",
-       "description": "A test Hatchy for unit testing"
-   }
-   ```
-
-2. **Location Data**:
-   ```python
-   volcano_data = {
-       "name": "Volcano",
-       "type": "location",
-       "description": "A volcanic habitat",
-       "attributes": {
-           "temperature": "hot",
-           "terrain": "volcanic"
-       }
-   }
-   ```
-
-3. **Component Initialization**:
-   - OpenAI embeddings for vector search
-   - ChatGPT for response generation
-   - Chroma vector store for similarity search
-   - Knowledge graph for entity relationships
-   - Enhanced chatbot for query handling
-Interactive test features:
-- Data loading verification
-- Generation-based queries
-- Element-based queries
-- Evolution relationship testing
-- World information queries
-- Live chat testing
-
-Available commands:
+Available commands in interactive mode:
 1. `data` - Test data loading
 2. `gen` - Test generation queries
 3. `element` - Test element queries
@@ -253,54 +194,9 @@ Available commands:
 6. `chat <message>` - Chat with the Hatchyverse chatbot
 7. `exit` - Exit testing session
 
-### Running the Tests
+### Test Coverage
 
-1. **Run All Component Tests**:
-   ```bash
-   python3 -m pytest tests/test_components.py -v
-   ```
-
-2. **Run Specific Test Categories**:
-   ```bash
-   # Run only knowledge graph tests
-   python3 -m pytest tests/test_components.py -k "knowledge_graph" -v
-   
-   # Run only chatbot tests
-   python3 -m pytest tests/test_components.py -k "chatbot" -v
-   ```
-
-3. **Generate Coverage Report**:
-   ```bash
-   pytest --cov=src --cov-report=term-missing tests/test_components.py
-   ```
-
-### Test Validation Criteria
-
-Each test category ensures:
-
-1. **Data Integrity**:
-   - Proper entity creation and storage
-   - Accurate relationship mapping
-   - Consistent attribute handling
-
-2. **Query Functionality**:
-   - Accurate search results
-   - Proper filter application
-   - Relevant context retrieval
-
-3. **Response Quality**:
-   - Valid response generation
-   - Proper context integration
-   - Accurate validation results
-
-4. **Error Handling**:
-   - Graceful error management
-   - Informative error messages
-   - System stability under invalid inputs
-
-### Expected Test Coverage
-
-The test suite aims to maintain comprehensive coverage across all core components:
+The test suite aims to maintain comprehensive coverage:
 
 #### 1. Knowledge Graph (90-100% coverage)
 - Entity creation, retrieval, and deletion
@@ -319,14 +215,13 @@ The test suite aims to maintain comprehensive coverage across all core component
 - Type conversion
 - Data validation
 
-#### 3. Contextual Retrieval (85-95% coverage)
-- Query analysis
-- Context gathering
-- Vector search integration
-- Entity network analysis
-- Timeline generation
-- Relationship path finding
-- Filter application
+#### 3. Relationship Extraction (85-95% coverage)
+- Pattern recognition
+- Confidence scoring
+- Entity resolution
+- Relationship validation
+- Pattern learning
+- Context analysis
 
 #### 4. Response Generation (80-90% coverage)
 - Context integration
@@ -336,27 +231,54 @@ The test suite aims to maintain comprehensive coverage across all core component
 - Error handling
 - Source coverage tracking
 
-#### 5. Integration Tests (75-85% coverage)
-- End-to-end query processing
-- Cross-component interaction
-- Data flow validation
-- Error propagation
-- State management
-- Performance monitoring
+### Continuous Learning
 
-#### 6. Edge Cases (70-80% coverage)
-- Invalid input handling
-- Boundary conditions
-- Resource limitations
-- Concurrent operations
-- Network issues
-- Data inconsistencies
+The system features dynamic pattern learning and relationship refinement:
 
-Key Coverage Metrics:
-- Line Coverage: Minimum 80% overall
-- Branch Coverage: Minimum 75% overall
-- Function Coverage: Minimum 90% overall
-- Critical Path Coverage: 100% for core functionality
+1. **Pattern Learning**
+   - Learns from high-confidence extractions
+   - Refines relationship patterns
+   - Improves extraction accuracy over time
+
+2. **Relationship Registry**
+   - Maintains learned patterns
+   - Tracks relationship confidence
+   - Persists improvements across sessions
+
+3. **Knowledge Graph Evolution**
+   - Updates entity relationships
+   - Refines confidence scores
+   - Maintains relationship consistency
+
+### Troubleshooting Tests
+
+If you encounter issues:
+
+1. **Knowledge Graph Build Failures**
+   - Check data file formats
+   - Verify file permissions
+   - Ensure proper data directory structure
+
+2. **Component Test Failures**
+   - Check Python environment
+   - Verify dependencies
+   - Review error logs
+
+3. **Relationship Test Failures**
+   - Check pattern definitions
+   - Verify entity resolution
+   - Review confidence thresholds
+
+4. **Interactive Test Issues**
+   - Check LLM API keys
+   - Verify vector store initialization
+   - Review chat history handling
+
+For detailed logs, run tests with increased verbosity:
+```bash
+python -m unittest -v tests/test_components.py
+python -m unittest -v tests/test_relationship_extraction.py
+```
 
 ## Usage
 

@@ -224,6 +224,24 @@ class EnhancedDataLoader:
                         relationships_created.append(('has_element', element_name))
                         self.logger.debug(f"Created element relationship: {entity_id} -has_element-> {element_name}")
 
+            # Process egg/hatching relationships
+            if 'egg' in cleaned_data and cleaned_data['egg']:
+                egg_type = cleaned_data['egg']
+                egg_id = self.knowledge_graph.resolve_or_create_entity(
+                    name=egg_type,
+                    entity_type='egg_type',
+                    attributes={'name': egg_type}
+                )
+                if egg_id:
+                    rel_id = self.knowledge_graph.add_relationship(
+                        source_id=entity_id,
+                        target_id=egg_id,
+                        relationship_type='hatches_from',
+                        metadata={'confidence': 0.9}
+                    )
+                    if rel_id:
+                        relationships_created.append(('hatches_from', egg_type))
+
             # Process faction relationships
             if 'faction' in cleaned_data and cleaned_data['faction']:
                 faction_name = cleaned_data['faction']
@@ -378,6 +396,30 @@ class EnhancedDataLoader:
         
         return relationships
 
+    def _convert_string(self, value: Any) -> Optional[str]:
+        """Convert values to strings safely."""
+        try:
+            if pd.isna(value) or value is None or value == '':
+                return None
+            # Convert float/int to string without decimal places if possible
+            if isinstance(value, (float, int)):
+                if float(value).is_integer():
+                    return str(int(value))
+                return str(value)
+            # Handle special string cases
+            if isinstance(value, str):
+                # Clean up the string
+                cleaned = value.strip()
+                if not cleaned:
+                    return None
+                if cleaned.lower() in ['nan', 'none', 'null']:
+                    return None
+                return cleaned
+            return str(value)
+        except (ValueError, TypeError):
+            logger.warning(f"Could not convert value {value} to string")
+            return None
+
     def _convert_numeric(self, value: Any, field: str) -> Optional[float]:
         """Convert numeric values safely."""
         try:
@@ -408,34 +450,48 @@ class EnhancedDataLoader:
             logger.warning(f"Could not convert {field} value {value} to number")
             return None
 
-    def _convert_string(self, value: Any) -> Optional[str]:
-        """Convert values to strings safely."""
-        try:
-            if pd.isna(value) or value is None or value == '':
-                return None
-            # Convert float/int to string without decimal places if possible
-            if isinstance(value, (float, int)):
-                if float(value).is_integer():
-                    return str(int(value))
-                return str(value)
-            # Handle special string cases
-            if isinstance(value, str):
-                # Clean up the string
-                cleaned = value.strip()
-                if not cleaned:
-                    return None
-                if cleaned.lower() in ['nan', 'none', 'null']:
-                    return None
-                return cleaned
-            return str(value)
-        except (ValueError, TypeError):
-            logger.warning(f"Could not convert value {value} to string")
+    def _clean_element_data(self, element: str) -> Optional[str]:
+        """Clean and normalize element data."""
+        if pd.isna(element) or element is None or element == '':
             return None
+            
+        element = str(element).strip().lower()
+        
+        # Map variations to standard names
+        element_map = {
+            'fire': 'Fire',
+            'water': 'Water',
+            'plant': 'Plant',
+            'dark': 'Dark',
+            'light': 'Light',
+            'void': 'Void',
+            'both': 'Both',
+            'lunar': 'Lunar',
+            'solar': 'Solar'
+        }
+        
+        return element_map.get(element, element.capitalize())
+
+    def _clean_egg_data(self, egg: str) -> Optional[str]:
+        """Clean and normalize egg type data."""
+        if pd.isna(egg) or egg is None or egg == '':
+            return None
+            
+        egg = str(egg).strip().lower()
+        
+        # Map variations to standard names
+        egg_map = {
+            'both': 'Both',
+            'lunar': 'Lunar',
+            'solar': 'Solar'
+        }
+        
+        return egg_map.get(egg, egg.capitalize())
 
     def load_csv_data(
         self,
         file_path: str,
-        entity_type: str,
+        entity_type: str = 'monster',
         relationship_mapping: Optional[Dict[str, str]] = None
     ) -> List[Dict[str, Any]]:
         """Load entity data from CSV with relationship extraction."""
@@ -508,13 +564,6 @@ class EnhancedDataLoader:
                     if generation:
                         data['generation'] = generation
                     
-                    # Separate relationship data
-                    relationship_data = {}
-                    if relationship_mapping:
-                        for source_field, rel_type in relationship_mapping.items():
-                            if source_field in data and data[source_field]:
-                                relationship_data[rel_type] = data.pop(source_field)
-                    
                     # Add entity with converted data
                     entity_id = self.knowledge_graph.add_entity(
                         name=data.get('name', data.get('Name', f"Entity_{uuid.uuid4().hex[:8]}")),
@@ -527,8 +576,13 @@ class EnhancedDataLoader:
                     # Store entity for relationship creation
                     entity_map[entity_id] = {
                         'data': data,
-                        'relationships': relationship_data
+                        'relationships': {}
                     }
+                    
+                    # Process relationships immediately after entity creation
+                    relationships = self._process_relationships(entity_id, data)
+                    if relationships:
+                        relationships_created += len(relationships)
                     
                     # Get the added entity and append to list
                     entity = self.knowledge_graph.get_entity_by_id(entity_id)
@@ -540,59 +594,9 @@ class EnhancedDataLoader:
                     logger.error(f"Error processing row: {str(e)}")
                     continue
             
-            # Create relationships after all entities are loaded
-            total_relationships = 0
-            for entity_id, entity_info in entity_map.items():
-                try:
-                    # Process both standard and mapped relationships
-                    created_relationships = []
-                    
-                    # Process standard relationships (Element, Evolves From, Habitat)
-                    standard_rels = self._process_relationships(entity_id, entity_info['data'])
-                    if standard_rels:
-                        created_relationships.extend(standard_rels)
-                    
-                    # Process mapped relationships
-                    if entity_info['relationships']:
-                        logger.debug(f"Processing mapped relationships for entity {entity_id}: {entity_info['relationships']}")
-                        for rel_type, target_value in entity_info['relationships'].items():
-                            if target_value and str(target_value).lower() not in ['none', 'n/a', '-', '', 'nan']:
-                                # Handle comma-separated values
-                                for target_name in [t.strip() for t in str(target_value).split(',')]:
-                                    if target_name:
-                                        try:
-                                            # Find or create target entity
-                                            target_entity = self.knowledge_graph.find_entity_by_name(target_name)
-                                            if not target_entity:
-                                                logger.debug(f"Creating new target entity: {target_name}")
-                                                target_id = self.knowledge_graph.add_entity(
-                                                    name=target_name,
-                                                    entity_type=rel_type.split('_')[-1],  # e.g., 'has_leader' -> 'leader'
-                                                    attributes={'name': target_name}
-                                                )
-                                                target_entity = self.knowledge_graph.get_entity_by_id(target_id)
-                                            
-                                            if target_entity:
-                                                logger.debug(f"Adding relationship: {entity_id} -{rel_type}-> {target_entity['id']}")
-                                                self.knowledge_graph.add_relationship(
-                                                    entity_id,
-                                                    target_entity['id'],
-                                                    rel_type
-                                                )
-                                                created_relationships.append((rel_type, target_name))
-                                        except Exception as e:
-                                            logger.error(f"Failed to create relationship {rel_type} with {target_name}: {str(e)}")
-                    
-                    total_relationships += len(created_relationships)
-                    if created_relationships:
-                        entity_name = self.knowledge_graph.get_entity_by_id(entity_id)['name']
-                        logger.info(f"Created {len(created_relationships)} relationships for {entity_name}:")
-                        for rel_type, target in created_relationships:
-                            logger.info(f"  - {entity_name} -{rel_type}-> {target}")
-                except Exception as e:
-                    logger.error(f"Error processing relationships for entity {entity_id}: {str(e)}")
+            logger.info(f"Loaded {loaded_count} entities and created {relationships_created} relationships from {file_path}")
+            logger.info(f"Loaded {loaded_count} {entity_type} entities from {os.path.basename(file_path)}")
             
-            logger.info(f"Loaded {loaded_count} entities and created {total_relationships} relationships from {file_path}")
             return loaded_entities
             
         except Exception as e:
