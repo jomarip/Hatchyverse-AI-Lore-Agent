@@ -279,7 +279,8 @@ class ContextualRetriever:
         # 4. Add specialized context based on query type
         specialized_context = self._get_specialized_context(
             query_analysis['query_type'],
-            query_analysis['filters']
+            query_analysis['filters'],
+            query
         )
         all_context.extend(specialized_context)
         
@@ -345,7 +346,7 @@ class ContextualRetriever:
                     filters=filters
                 )
                 
-            for entity in entities:
+                for entity in entities:
                     # Format entity data
                     content = self._format_entity_content(entity)
                     
@@ -363,6 +364,7 @@ class ContextualRetriever:
                     })
             except Exception as e:
                 logger.error(f"Error searching {source}: {str(e)}")
+                continue
         
         return results
 
@@ -452,7 +454,7 @@ class ContextualRetriever:
         for ctx in context:
             # Validate content relevance
             if not self._is_content_relevant(ctx, query_analysis):
-                        continue
+                continue
                         
             # Track coverage
             self._update_coverage_tracking(ctx, coverage, query_analysis)
@@ -464,7 +466,7 @@ class ContextualRetriever:
             
             enhanced_context.append(ctx)
             
-            # Sort by confidence
+        # Sort by confidence
         enhanced_context.sort(
             key=lambda x: x.get('metadata', {}).get('confidence', 0),
             reverse=True
@@ -664,19 +666,20 @@ class ContextualRetriever:
     def _get_specialized_context(
         self,
         query_type: str,
-        filters: Dict[str, Any]
+        filters: Dict[str, Any],
+        query: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """Get specialized context based on query type."""
         if query_type == 'element':
             element = filters.get('element')
             if element:
                 return self._get_element_context(element)
-        elif query_type == 'location':
+        elif query_type == 'location' and query:
             location_terms = self._extract_location_terms(query)
             return [self._get_location_context(term) for term in location_terms]
         elif query_type == 'generation':
             generation = filters.get('generation')
-        if generation:
+            if generation:
                 return self._get_generation_context(generation)
         return []
 
@@ -839,6 +842,7 @@ class ContextualRetriever:
                     })
             except Exception as e:
                 logger.error(f"Error searching {file}: {str(e)}")
+                continue
         
         return results
 
@@ -989,21 +993,22 @@ class ContextualRetriever:
 
     def _process_text_content(self, doc: Document) -> Dict[str, Any]:
         """Process text content and format for LLM consumption."""
+        try:
             # Extract entity information if available
             entity_id = doc.metadata.get('entity_id')
             entity_context = None
             if entity_id:
                 entity_context = self.get_entity_context(entity_id)
             
-        # Create formatted result with source information
+            # Create formatted result with source information
             result = {
                 'text_content': doc.page_content,
                 'metadata': {
                     'source': doc.metadata.get('source', 'unknown'),
                     'type': doc.metadata.get('type', 'text'),
                     'generation': doc.metadata.get('generation'),
-                'element': doc.metadata.get('element'),
-                'file_name': doc.metadata.get('source', '').split('/')[-1] if doc.metadata.get('source') else 'unknown'
+                    'element': doc.metadata.get('element'),
+                    'file_name': doc.metadata.get('source', '').split('/')[-1] if doc.metadata.get('source') else 'unknown'
                 }
             }
             
@@ -1011,4 +1016,14 @@ class ContextualRetriever:
             if entity_context:
                 result['entity_context'] = entity_context
             
-        return result 
+            return result
+        except Exception as e:
+            logger.error(f"Error processing text content: {str(e)}")
+            return {
+                'text_content': '',
+                'metadata': {
+                    'source': 'unknown',
+                    'type': 'text',
+                    'error': str(e)
+                }
+            } 

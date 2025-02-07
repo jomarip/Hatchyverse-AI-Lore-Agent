@@ -7,7 +7,8 @@ from datetime import datetime
 from collections import defaultdict
 
 from .knowledge_graph import HatchyKnowledgeGraph
-from .relationship_extractor import RelationshipRegistry, AdaptiveRelationshipExtractor
+from .relationship_extractor import AdaptiveRelationshipExtractor
+from .registry import RelationshipRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,7 @@ class EnhancedContextManager:
     ):
         self.knowledge_graph = knowledge_graph
         self.relationship_registry = relationship_registry
-        self.relationship_extractor = AdaptiveRelationshipExtractor(llm, relationship_registry)
+        self.relationship_extractor = AdaptiveRelationshipExtractor(llm_client=llm)
         self.context_cache = {}
         self.query_patterns = self._init_query_patterns()
         

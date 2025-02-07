@@ -1,15 +1,17 @@
 from typing import Dict, List, Any, Optional
 import logging
+from datetime import datetime
 from langchain_core.language_models import BaseLLM
 from langchain_core.output_parsers import StrOutputParser
+from langchain_core.vectorstores import VectorStore
+from langchain_core.retrievers import BaseRetriever
 from .knowledge_graph import HatchyKnowledgeGraph
 from .contextual_retriever import ContextualRetriever
 from .enhanced_loader import EnhancedDataLoader
 from .response_validator import ResponseValidator
-from langchain.vectorstores import VectorStore
 from ..prompts.chat_prompts import get_prompt_template
-from datetime import datetime
-from .relationship_extractor import RelationshipRegistry, AdaptiveRelationshipExtractor
+from .relationship_extractor import AdaptiveRelationshipExtractor
+from .registry import RelationshipRegistry
 from .context_manager import EnhancedContextManager
 
 logger = logging.getLogger(__name__)
@@ -215,10 +217,25 @@ class ResponseGenerator:
 class EnhancedChatbot:
     """Enhanced chatbot with improved relationship and context handling."""
     
-    def __init__(self, llm):
+    def __init__(
+        self,
+        llm: BaseLLM,
+        knowledge_graph: Optional[HatchyKnowledgeGraph] = None,
+        vector_store: Optional[VectorStore] = None
+    ):
+        """Initialize chatbot with required components."""
         self.llm = llm
-        self.knowledge_graph = HatchyKnowledgeGraph()
+        self.knowledge_graph = knowledge_graph or HatchyKnowledgeGraph()
         self.relationship_registry = RelationshipRegistry()
+        
+        # Initialize retriever from vector store if provided
+        self.retriever = None
+        if vector_store:
+            self.retriever = vector_store.as_retriever(
+                search_kwargs={"k": 5}
+            )
+        
+        # Initialize context manager with components
         self.context_manager = EnhancedContextManager(
             self.knowledge_graph,
             self.relationship_registry,
@@ -330,7 +347,14 @@ class EnhancedChatbot:
             if query_type == 'location':
                 contexts = self._get_location_context(query)
             else:
-                contexts = self.retriever.get_context(query)
+                contexts = []
+                if self.retriever:
+                    # Get relevant documents from vector store
+                    docs = self.retriever.get_relevant_documents(query)
+                    contexts.extend([{
+                        'text_content': doc.page_content,
+                        'metadata': doc.metadata
+                    } for doc in docs])
             
             logger.debug(f"Retrieved {len(contexts)} context items")
             

@@ -7,23 +7,17 @@ from langchain_openai import OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.language_models import BaseLLM
 from langchain_openai import ChatOpenAI
+from langchain_community.vectorstores import FAISS
 from src.models.knowledge_graph import HatchyKnowledgeGraph
 from src.models.enhanced_loader import EnhancedDataLoader
 from src.models.enhanced_chatbot import EnhancedChatbot
 from src.models.contextual_retriever import ContextualRetriever
-from langchain_community.vectorstores import Chroma
-from langchain.schema import Document
-from langchain.vectorstores import FAISS
-import json
-
-# Add project root to Python path
-project_root = Path(__file__).parent
-sys.path.append(str(project_root))
+from src.models.registry import RelationshipRegistry
 
 # Configure logging
 logging.basicConfig(
-    level=logging.DEBUG,  # Changed from INFO to DEBUG
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',  # More detailed format
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler()
     ]
@@ -32,7 +26,6 @@ logging.basicConfig(
 # Set specific loggers to higher levels to reduce noise
 logging.getLogger('httpx').setLevel(logging.WARNING)
 logging.getLogger('httpcore').setLevel(logging.WARNING)
-logging.getLogger('chromadb').setLevel(logging.WARNING)
 logging.getLogger('openai').setLevel(logging.WARNING)
 logging.getLogger('urllib3').setLevel(logging.WARNING)
 
@@ -69,12 +62,12 @@ class InteractiveTest:
         self.knowledge_graph = HatchyKnowledgeGraph()
         
         # Initialize vector store
-        self.vector_store = Chroma(
-            persist_directory=os.getenv('VECTOR_STORE_PATH', './data/vector_store'),
-            embedding_function=self.embeddings
+        self.vector_store = FAISS.from_texts(
+            texts=["Initial text for vector store"],
+            embedding=self.embeddings
         )
         
-        # Initialize chatbot
+        # Initialize chatbot with all components
         self.chatbot = EnhancedChatbot(
             llm=self.llm,
             knowledge_graph=self.knowledge_graph,
