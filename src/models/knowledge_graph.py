@@ -484,14 +484,37 @@ class HatchyKnowledgeGraph:
                             results.append(self._prepare_entity_for_output(entity))
                             continue
                     
-                # Check attributes
+                # Check attributes and description
                 attributes = entity.get('attributes', {})
+                description = str(attributes.get('description', '')).lower()
+                
+                # Check direct attribute values
                 if any(
                     isinstance(v, str) and query in str(v).lower()
                     for v in attributes.values()
                 ):
                     results.append(self._prepare_entity_for_output(entity))
-                    
+                    continue
+                
+                # Check description for query terms
+                if query in description:
+                    results.append(self._prepare_entity_for_output(entity))
+                    continue
+                
+                # Special handling for attribute-based queries
+                attribute_terms = {
+                    'fly': ['can_fly', 'flying', 'flight', 'wings'],
+                    'wings': ['has_wings', 'winged', 'can fly'],
+                    'size': ['large', 'huge', 'giant', 'massive'],
+                    'mount': ['mountable', 'rideable', 'can be ridden']
+                }
+                
+                for term, indicators in attribute_terms.items():
+                    if term in query:
+                        if any(indicator in description for indicator in indicators):
+                            results.append(self._prepare_entity_for_output(entity))
+                            break
+                
                 if len(results) >= limit:
                     break
                     
@@ -910,7 +933,7 @@ class HatchyKnowledgeGraph:
     def get_entities_by_source(self, source: str) -> List[Dict[str, Any]]:
         """Get all entities from a specific source."""
         return [self.entities[eid] for eid in self.source_registry.get(source, [])]
-    
+
     def merge_entities(
         self,
         source_id: str,

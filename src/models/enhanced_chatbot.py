@@ -782,11 +782,71 @@ class EnhancedChatbot:
             return f"{query} {' '.join(expanded_terms)}"
         return query
         
+    def _format_relationship(self, rel: Dict[str, Any]) -> str:
+        """Format relationship for context."""
+        source_name = self.knowledge_graph.get_entity_name(rel['source_id'])
+        target_name = self.knowledge_graph.get_entity_name(rel['target_id'])
+        return f"{source_name} {rel['type']} {target_name}"
+
     def _get_knowledge_graph_context(self, query: str) -> List[Dict[str, Any]]:
         """Get context from knowledge graph for specific entities."""
         contexts = []
         query_lower = query.lower()
         
+        # Check for equipment/armor queries
+        if any(term in query_lower for term in ['armor', 'weapon', 'equipment', 'gear']):
+            # Search for equipment entities with fuzzy matching
+            equipment = self.knowledge_graph.search_entities(
+                query,
+                entity_type='equipment',
+                fuzzy_match=True
+            )
+            if equipment:
+                for item in equipment:
+                    contexts.append({
+                        'text_content': self._format_entity_content(item),
+                        'metadata': {'source': 'knowledge_graph', 'type': 'equipment'}
+                    })
+                    # Get related entities (e.g., monsters that use this equipment)
+                    related = self.knowledge_graph.get_related_entities(item['id'])
+                    for rel in related:
+                        contexts.append({
+                            'text_content': self._format_relationship(rel),
+                            'metadata': {'source': 'knowledge_graph', 'type': 'relationship'}
+                        })
+
+        # Check for attribute-based queries (flying, wings, etc.)
+        attribute_terms = {
+            'fly': ['can_fly', 'flying', 'flight'],
+            'wings': ['has_wings', 'winged'],
+            'size': ['large', 'huge', 'giant'],
+            'mount': ['mountable', 'rideable']
+        }
+        
+        for term, attrs in attribute_terms.items():
+            if term in query_lower:
+                # Search entities with these attributes
+                matching_entities = []
+                for entity in self.knowledge_graph.get_entities():
+                    entity_attrs = entity.get('attributes', {})
+                    desc = str(entity_attrs.get('description', '')).lower()
+                    
+                    # Check both direct attributes and description text
+                    if any(attr in entity_attrs for attr in attrs) or \
+                       any(attr in desc for attr in attrs):
+                        matching_entities.append(entity)
+                
+                if matching_entities:
+                    contexts.append({
+                        'text_content': f"Found {len(matching_entities)} matching entities",
+                        'metadata': {'source': 'knowledge_graph', 'type': 'count'}
+                    })
+                    for entity in matching_entities:
+                        contexts.append({
+                            'text_content': self._format_entity_content(entity),
+                            'metadata': {'source': 'knowledge_graph', 'type': 'entity'}
+                        })
+
         # Check for comparison queries
         if any(term in query_lower for term in ['similar', 'compare', 'difference', 'like']):
             # Extract entity names using proper noun detection
@@ -879,27 +939,6 @@ class EnhancedChatbot:
                         'text_content': self._format_entity_content(entity),
                         'metadata': {'source': 'knowledge_graph', 'type': 'entity'}
                     })
-        
-        # Check for equipment queries
-        if any(term in query_lower for term in ['armor', 'weapon', 'equipment']):
-            equipment = self.knowledge_graph.search_entities(
-                query,
-                entity_type='equipment',
-                fuzzy_match=True
-            )
-            if equipment:
-                for item in equipment:
-                    contexts.append({
-                        'text_content': self._format_entity_content(item),
-                        'metadata': {'source': 'knowledge_graph', 'type': 'equipment'}
-                    })
-                    # Get related entities
-                    related = self.knowledge_graph.get_related_entities(item['id'])
-                    for rel in related:
-                        contexts.append({
-                            'text_content': self._format_relationship(rel),
-                            'metadata': {'source': 'knowledge_graph', 'type': 'relationship'}
-                        })
         
         return contexts
 
