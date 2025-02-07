@@ -788,64 +788,133 @@ class EnhancedChatbot:
         query_lower = query.lower()
         
         # Check for generation-specific queries
-        if 'gen1' in query_lower or 'generation 1' in query_lower:
-            entities = self.knowledge_graph.get_entities_by_generation('1')
+        gen_match = re.search(r'gen(?:eration)?[\s\-]*(\d+)', query_lower)
+        if gen_match:
+            generation = gen_match.group(1)
+            entities = self.knowledge_graph.get_entities_by_generation(generation)
+            
+            # Filter by element if specified
+            element_match = re.search(r'(fire|water|plant|dark|light|void)', query_lower)
+            if element_match and entities:
+                element = element_match.group(1).capitalize()
+                entities = [e for e in entities if 
+                          e.get('attributes', {}).get('element', '').lower() == element.lower() or
+                          e.get('element', '').lower() == element.lower()]
+            
             if entities:
                 contexts.append({
-                    'text_content': f"Generation 1 Hatchies count: {len(entities)}",
+                    'text_content': f"Generation {generation} {element_match.group(1).capitalize() if element_match else ''} Hatchies count: {len(entities)}",
                     'metadata': {'source': 'knowledge_graph', 'type': 'generation_info'}
                 })
-                # Add sample entities
-                for entity in entities[:5]:
+                # Add all matching entities
+                for entity in entities:
                     contexts.append({
                         'text_content': self._format_entity_content(entity),
                         'metadata': {'source': 'knowledge_graph', 'type': 'entity'}
                     })
         
-        # Check for location queries
-        if 'ixor' in query_lower:
-            ixor_entities = self.knowledge_graph.search_entities('Ixor', entity_type='location')
-            contexts.extend([{
-                'text_content': self._format_entity_content(entity),
-                'metadata': {'source': 'knowledge_graph', 'type': 'location'}
-            } for entity in ixor_entities])
+        # Check for mountable/rideable queries
+        if any(term in query_lower for term in ['rideable', 'mountable', 'can be ridden']):
+            # Get all entities and filter by mountable attribute and generation if specified
+            all_entities = self.knowledge_graph.get_entities()
+            mountable = []
+            for entity in all_entities:
+                # Check mountable attribute and description for size indicators
+                is_mountable = (
+                    entity.get('attributes', {}).get('mountable', False) or
+                    any(term in str(entity.get('attributes', {}).get('description', '')).lower() 
+                        for term in ['large', 'huge', 'massive', 'giant', 'can be ridden', 'mountable'])
+                )
+                if is_mountable:
+                    # Filter by generation if specified in query
+                    entity_gen = entity.get('attributes', {}).get('generation')
+                    if 'gen1' in query_lower and entity_gen == '1':
+                        mountable.append(entity)
+                    elif 'gen2' in query_lower and entity_gen == '2':
+                        mountable.append(entity)
+                    elif not ('gen1' in query_lower or 'gen2' in query_lower):
+                        mountable.append(entity)
+            
+            if mountable:
+                contexts.append({
+                    'text_content': f"Found {len(mountable)} rideable Hatchies",
+                    'metadata': {'source': 'knowledge_graph', 'type': 'mountable_info'}
+                })
+                for entity in mountable:
+                    contexts.append({
+                        'text_content': self._format_entity_content(entity),
+                        'metadata': {'source': 'knowledge_graph', 'type': 'entity'}
+                    })
         
-        return contexts 
+        # Check for equipment queries
+        if any(term in query_lower for term in ['armor', 'weapon', 'equipment']):
+            equipment = self.knowledge_graph.search_entities(
+                query,
+                entity_type='equipment',
+                fuzzy_match=True
+            )
+            if equipment:
+                for item in equipment:
+                    contexts.append({
+                        'text_content': self._format_entity_content(item),
+                        'metadata': {'source': 'knowledge_graph', 'type': 'equipment'}
+                    })
+                    # Get related entities
+                    related = self.knowledge_graph.get_related_entities(item['id'])
+                    for rel in related:
+                        contexts.append({
+                            'text_content': self._format_relationship(rel),
+                            'metadata': {'source': 'knowledge_graph', 'type': 'relationship'}
+                        })
+        
+        return contexts
 
     def _format_entity_content(self, entity: Dict[str, Any]) -> str:
         """Format entity information for response context."""
-        elements = [
-            f"## {entity.get('name', 'Unknown')}",
-            f"**Type:** {entity.get('entity_type', 'Unknown')}"
-        ]
+        elements = []
         
-        # Add element if present
-        if 'element' in entity or 'element' in entity.get('attributes', {}):
-            element = entity.get('element') or entity.get('attributes', {}).get('element', 'Unknown')
-            elements.append(f"**Element:** {element.capitalize()}")
+        # Add name and type header
+        name = entity.get('name', 'Unknown')
+        entity_type = entity.get('entity_type', 'Unknown')
+        elements.append(f"## {name}")
+        elements.append(f"**Type:** {entity_type}")
         
-        # Add attributes
-        if 'attributes' in entity:
-            attrs = []
-            for key, value in entity['attributes'].items():
-                if key not in ['name', 'element']:  # Skip duplicates
-                    if key == 'generation':
-                        attrs.append(f"**Generation:** Gen {value}")
-                    elif key == 'evolution_stage':
-                        attrs.append(f"**Evolution Stage:** {value}")
-                    elif key == 'mountable':
-                        attrs.append("**Rideable:** Yes" if value else "**Rideable:** No")
-                    else:
-                        attrs.append(f"**{key.replace('_', ' ').title()}:** {value}")
-            elements.extend(attrs)
+        # Add element with emoji if present
+        element = None
+        if 'element' in entity:
+            element = entity['element']
+        elif 'element' in entity.get('attributes', {}):
+            element = entity['attributes']['element']
+            
+        if element:
+            emoji = self._get_element_emoji(element)
+            elements.append(f"**Element:** {element.capitalize()} {emoji}")
+        
+        # Add generation and evolution stage if present
+        attrs = entity.get('attributes', {})
+        if 'generation' in attrs:
+            elements.append(f"**Generation:** Gen {attrs['generation']}")
+        if 'evolution_stage' in attrs:
+            elements.append(f"**Evolution Stage:** {attrs['evolution_stage']}")
+            
+        # Add mountable status if relevant
+        if attrs.get('mountable') or any(
+            term in str(attrs.get('description', '')).lower() 
+            for term in ['large', 'huge', 'massive', 'giant', 'can be ridden', 'mountable']
+        ):
+            elements.append("**Rideable:** Yes")
+            
+        # Add other important attributes
+        for key, value in attrs.items():
+            if key not in ['name', 'element', 'generation', 'evolution_stage', 'mountable', 'description']:
+                elements.append(f"**{key.replace('_', ' ').title()}:** {value}")
         
         # Add description if present
-        if 'description' in entity or 'description' in entity.get('attributes', {}):
-            desc = entity.get('description') or entity.get('attributes', {}).get('description', '')
-            if desc:
-                elements.append(f"\n**Description:** {desc}")
+        description = attrs.get('description', '')
+        if description:
+            elements.append(f"\n**Description:** {description}")
         
-        # Add relationships if present
+        # Add relationships if available
         if hasattr(self, 'knowledge_graph') and self.knowledge_graph:
             try:
                 relationships = self.knowledge_graph.get_relationships(entity['id'])
@@ -857,7 +926,7 @@ class EnhancedChatbot:
             except Exception as e:
                 logger.debug(f"Error getting relationships: {str(e)}")
         
-        return "\n".join(elements) 
+        return "\n".join(elements)
 
     def _search_text_files(self, query: str, query_type: str) -> List[Dict[str, Any]]:
         """Search through text files directly when other methods fail."""

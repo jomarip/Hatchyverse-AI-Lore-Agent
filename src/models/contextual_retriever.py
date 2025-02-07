@@ -77,7 +77,7 @@ class QueryAnalyzer:
                 'value': True
             }
         }
-        
+    
     def analyze(self, query: str) -> Dict[str, Any]:
         """Analyze query to extract attributes and patterns."""
         analysis = {
@@ -154,8 +154,8 @@ class ContextualRetriever:
         self.vector_store = vector_store
         self.relationship_registry = relationship_registry
         self.query_analyzer = QueryAnalyzer()
-        
-    def get_context(self, query: str, history: Optional[List[Dict]] = None) -> Dict[str, Any]:
+
+    def get_enhanced_context(self, query: str, history: Optional[List[Dict]] = None) -> Dict[str, Any]:
         """Get enhanced context for a query."""
         try:
             # Analyze query
@@ -202,6 +202,9 @@ class ContextualRetriever:
             logger.error(f"Error getting context: {str(e)}")
             return self._get_error_context(str(e))
             
+    # Alias the old method to the new one
+    get_context = get_enhanced_context
+
     def _add_count_context(self, context: Dict[str, Any], analysis: Dict[str, Any]):
         """Add context for count queries."""
         if 'generation' in analysis['attributes']:
