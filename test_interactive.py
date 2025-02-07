@@ -52,22 +52,55 @@ class InteractiveTest:
             model=os.getenv('OPENAI_EMBEDDING_MODEL', 'text-embedding-3-small')
         )
         
-        # Initialize LLM
+        # Initialize LLM with optimized settings
         self.llm = ChatOpenAI(
-            model_name=os.getenv('OPENAI_MODEL_NAME', 'gpt-4-0125-preview'),
-            temperature=0.7
+            model_name="gpt-4o-mini",  # Using mini model with higher token limit
+            temperature=0.7,
+            max_tokens=1000  # Limit response size
         )
         
         # Initialize knowledge graph
         self.knowledge_graph = HatchyKnowledgeGraph()
         
-        # Initialize vector store
-        self.vector_store = FAISS.from_texts(
-            texts=["Initial text for vector store"],
-            embedding=self.embeddings
+        # Load initial text data for vector store
+        text_files = [
+            "Hatchy World Comic_ Chaos saga.txt",
+            "Hatchy World _ world design.txt",
+            "HWCS - Simplified main arc and arc suggestions.txt",
+            "Hatchyverse Eco Presentation v3.txt"
+        ]
+        
+        # Create vector store from text files with smaller chunks
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1200,  # Increased for better context
+            chunk_overlap=200,  # More overlap to maintain context
+            separators=[
+                "\nArc: ", "\nFaction: ", "\nHatchy: ",  # Hatchyverse-specific splits
+                "\n## ", "\n### ", "\n\n", ". ", "! ", "? "
+            ],
+            keep_separator=True  # Preserve structure markers
         )
         
-        # Initialize chatbot with all components
+        texts = []
+        for file in text_files:
+            try:
+                with open(self.data_dir / file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    # Add file context to each chunk
+                    chunks = text_splitter.split_text(content)
+                    for chunk in chunks:
+                        texts.append(f"Source: {file}\n\n{chunk}")
+            except Exception as e:
+                logger.error(f"Error loading {file}: {str(e)}")
+        
+        # Initialize vector store with chunked content
+        self.vector_store = FAISS.from_texts(
+            texts=texts or ["Initial text for vector store"],
+            embedding=self.embeddings,
+            metadatas=[{"source": "hatchyverse"} for _ in texts]  # Add metadata
+        )
+        
+        # Initialize chatbot with optimized retrieval
         self.chatbot = EnhancedChatbot(
             llm=self.llm,
             knowledge_graph=self.knowledge_graph,
@@ -219,10 +252,18 @@ class InteractiveTest:
                 else:
                     print("✅ Response validated")
                 
-                if response["validation"]["enhancements"]:
+                if response["validation"].get("enhancements"):
                     print("\nSuggested Enhancements:")
                     for enhancement in response["validation"]["enhancements"]:
-                        print(f"- {enhancement['suggestion']}")
+                        if isinstance(enhancement, dict):
+                            if enhancement.get('suggestion'):
+                                print(f"- {enhancement['suggestion']}")
+                            elif enhancement.get('message'):
+                                print(f"- {enhancement['message']}")
+                            else:
+                                logger.warning(f"Malformed enhancement: {enhancement}")
+                        else:
+                            print(f"- {enhancement}")
             
         except Exception as e:
             logger.error(f"Error during chat: {e}", exc_info=True)

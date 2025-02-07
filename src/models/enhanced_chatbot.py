@@ -13,6 +13,7 @@ from ..prompts.chat_prompts import get_prompt_template
 from .relationship_extractor import AdaptiveRelationshipExtractor
 from .registry import RelationshipRegistry
 from .context_manager import EnhancedContextManager
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -231,8 +232,15 @@ class EnhancedChatbot:
         # Initialize retriever from vector store if provided
         self.retriever = None
         if vector_store:
+            # Configure retriever with optimized settings
             self.retriever = vector_store.as_retriever(
-                search_kwargs={"k": 5}
+                search_kwargs={
+                    "k": 8,  # Increased for better coverage
+                    "score_threshold": 0.5,  # Lowered for better recall
+                    "fetch_k": 20,  # Fetch more candidates for filtering
+                    "lambda_mult": 0.5,  # Adjust diversity vs. relevance
+                    "filter_duplicates": True  # Remove duplicate content
+                }
             )
         
         # Initialize context manager with components
@@ -243,6 +251,7 @@ class EnhancedChatbot:
         )
         self.response_generator = ResponseGenerator(llm)
         self.conversation_history = {}
+        self.validator = ResponseValidator(self.knowledge_graph)
         
     def process_message(
         self,
@@ -343,22 +352,28 @@ class EnhancedChatbot:
             query_type = self._determine_query_type(query, [])
             prompt_template = get_prompt_template(query_type)
             
+            # Expand query with synonyms and related terms
+            expanded_query = self._expand_query(query)
+            
             # Get context based on query type
-            if query_type == 'location':
-                contexts = self._get_location_context(query)
-            else:
-                contexts = []
-                if self.retriever:
-                    # Get relevant documents from vector store
-                    docs = self.retriever.get_relevant_documents(query)
-                    contexts.extend([{
-                        'text_content': doc.page_content,
-                        'metadata': doc.metadata
-                    } for doc in docs])
+            contexts = []
+            
+            # Try knowledge graph lookup first for specific entities
+            kg_contexts = self._get_knowledge_graph_context(expanded_query)
+            if kg_contexts:
+                contexts.extend(kg_contexts)
+            
+            # Get vector store context
+            if self.retriever:
+                docs = self.retriever.invoke(expanded_query)
+                contexts.extend([{
+                    'text_content': doc.page_content,
+                    'metadata': doc.metadata
+                } for doc in docs])
             
             logger.debug(f"Retrieved {len(contexts)} context items")
             
-            # Format context
+            # Format context with size limits
             formatted_context = self._format_context(contexts)
             
             # Prepare prompt variables
@@ -384,7 +399,7 @@ class EnhancedChatbot:
             validation = self.validator.validate(response_text, contexts)
             
             # Apply enhancements if needed
-            if validation['enhancements']:
+            if validation.get('enhancements'):
                 response_text = self._enhance_response(response_text, validation['enhancements'])
             
             return {
@@ -423,34 +438,54 @@ class EnhancedChatbot:
         return 'base'
         
     def _format_context(self, contexts: List[Dict[str, Any]]) -> str:
-        """Format context for LLM consumption."""
+        """Format context for LLM consumption with improved structure."""
         formatted_parts = []
         
+        # Group contexts by type
+        grouped_contexts = {
+            'entity': [],
+            'relationship': [],
+            'text': [],
+            'metadata': []
+        }
+        
         for ctx in contexts:
-            # Add main content
             if 'text_content' in ctx:
+                # Add source context
+                source = ctx.get('metadata', {}).get('source', '')
+                if source:
+                    formatted_parts.append(f"\nSource: {source}")
                 formatted_parts.append(f"Content: {ctx['text_content']}")
             
-            # Add entity context if available
+            # Add entity context with relationships
             if 'entity_context' in ctx:
                 entity_ctx = ctx['entity_context']
                 entity = entity_ctx['entity']
-                formatted_parts.append(
-                    f"Entity: {entity['name']} ({entity['entity_type']})\n"
-                    f"Attributes: {', '.join(f'{k}: {v}' for k, v in entity['attributes'].items())}"
-                )
                 
-                # Add relationships
+                # Format entity details
+                entity_parts = [
+                    f"\nEntity: {entity['name']} ({entity['entity_type']})",
+                    "Attributes:"
+                ]
+                
+                # Sort attributes for consistent presentation
+                sorted_attrs = sorted(entity['attributes'].items())
+                for k, v in sorted_attrs:
+                    entity_parts.append(f"- {k}: {v}")
+                
+                # Add relationships with confidence scores
                 if 'relationships' in entity_ctx:
-                    rel_parts = []
+                    entity_parts.append("\nRelationships:")
                     for rel in entity_ctx['relationships']:
-                        rel_parts.append(
-                            f"- {rel['type']}: {rel['target_name']}"
+                        confidence = rel.get('metadata', {}).get('confidence', 0.0)
+                        entity_parts.append(
+                            f"- {rel['type']}: {rel['target_name']} "
+                            f"(confidence: {confidence:.2f})"
                         )
-                    if rel_parts:
-                        formatted_parts.append("Relationships:\n" + "\n".join(rel_parts))
+                
+                formatted_parts.extend(entity_parts)
             
-            # Add metadata
+            # Add metadata if relevant
             if 'metadata' in ctx:
                 meta = ctx['metadata']
                 meta_parts = []
@@ -458,9 +493,9 @@ class EnhancedChatbot:
                     if v and k not in ['source', 'type']:
                         meta_parts.append(f"{k}: {v}")
                 if meta_parts:
-                    formatted_parts.append("Metadata: " + ", ".join(meta_parts))
+                    formatted_parts.append("\nMetadata: " + ", ".join(meta_parts))
         
-        return "\n\n".join(formatted_parts)
+        return "\n".join(formatted_parts)
         
     def _extract_element(self, query: str) -> Optional[str]:
         """Extract the primary element from query."""
@@ -634,3 +669,132 @@ class EnhancedChatbot:
                 contexts.extend(self.retriever.get_context(f"location {term}"))
         
         return contexts 
+
+    def _expand_query(self, query: str) -> str:
+        """Expand query with enhanced Hatchyverse-specific terms."""
+        query_lower = query.lower()
+        expanded_terms = []
+        
+        # Generation expansions with variations
+        gen_patterns = [
+            (r'gen(?:eration)?\s*(\d+)', r'generation \1 first generation original'),
+            (r'gen-?(\d+)', r'generation \1 gen\1')
+        ]
+        
+        for pattern, expansion in gen_patterns:
+            if match := re.search(pattern, query_lower):
+                expanded_terms.extend([
+                    expansion.replace('\\1', match.group(1)),
+                    f"gen {match.group(1)} hatchy",
+                    f"generation {match.group(1)} monsters"
+                ])
+        
+        # Location expansions with context
+        location_terms = {
+            'ixor': ['crystalline city', 'quartz capital', 'crystal kingdom'],
+            'omniterra': ['world', 'realm', 'universe', 'setting'],
+            'crystal lake': ['water region', 'lake area', 'crystal waters']
+        }
+        
+        for location, expansions in location_terms.items():
+            if location in query_lower:
+                expanded_terms.extend(expansions)
+        
+        # Element expansions with types
+        elements = ['fire', 'water', 'plant', 'dark', 'light', 'void']
+        for element in elements:
+            if element in query_lower:
+                expanded_terms.extend([
+                    f'{element} type',
+                    f'{element} element',
+                    f'{element} hatchy',
+                    f'{element} monsters'
+                ])
+        
+        # Equipment and evolution terms
+        if 'armor' in query_lower or 'weapon' in query_lower:
+            expanded_terms.extend(['equipment', 'gear', 'items'])
+        if 'evolution' in query_lower:
+            expanded_terms.extend(['stage', 'form', 'evolved form'])
+        
+        # Combine with original query
+        if expanded_terms:
+            return f"{query} {' '.join(expanded_terms)}"
+        return query
+        
+    def _get_knowledge_graph_context(self, query: str) -> List[Dict[str, Any]]:
+        """Get context from knowledge graph for specific entities."""
+        contexts = []
+        query_lower = query.lower()
+        
+        # Check for generation-specific queries
+        if 'gen1' in query_lower or 'generation 1' in query_lower:
+            entities = self.knowledge_graph.get_entities_by_generation('1')
+            if entities:
+                contexts.append({
+                    'text_content': f"Generation 1 Hatchies count: {len(entities)}",
+                    'metadata': {'source': 'knowledge_graph', 'type': 'generation_info'}
+                })
+                # Add sample entities
+                for entity in entities[:5]:
+                    contexts.append({
+                        'text_content': self._format_entity_content(entity),
+                        'metadata': {'source': 'knowledge_graph', 'type': 'entity'}
+                    })
+        
+        # Check for location queries
+        if 'ixor' in query_lower:
+            ixor_entities = self.knowledge_graph.search_entities('Ixor', entity_type='location')
+            contexts.extend([{
+                'text_content': self._format_entity_content(entity),
+                'metadata': {'source': 'knowledge_graph', 'type': 'location'}
+            } for entity in ixor_entities])
+        
+        return contexts 
+
+    def _format_entity_content(self, entity: Dict[str, Any]) -> str:
+        """Format entity information for response context."""
+        elements = [
+            f"## {entity.get('name', 'Unknown')}",
+            f"**Type:** {entity.get('entity_type', 'Unknown')}"
+        ]
+        
+        # Add element if present
+        if 'element' in entity or 'element' in entity.get('attributes', {}):
+            element = entity.get('element') or entity.get('attributes', {}).get('element', 'Unknown')
+            elements.append(f"**Element:** {element.capitalize()}")
+        
+        # Add attributes
+        if 'attributes' in entity:
+            attrs = []
+            for key, value in entity['attributes'].items():
+                if key not in ['name', 'element']:  # Skip duplicates
+                    if key == 'generation':
+                        attrs.append(f"**Generation:** Gen {value}")
+                    elif key == 'evolution_stage':
+                        attrs.append(f"**Evolution Stage:** {value}")
+                    elif key == 'mountable':
+                        attrs.append("**Rideable:** Yes" if value else "**Rideable:** No")
+                    else:
+                        attrs.append(f"**{key.replace('_', ' ').title()}:** {value}")
+            elements.extend(attrs)
+        
+        # Add description if present
+        if 'description' in entity or 'description' in entity.get('attributes', {}):
+            desc = entity.get('description') or entity.get('attributes', {}).get('description', '')
+            if desc:
+                elements.append(f"\n**Description:** {desc}")
+        
+        # Add relationships if present
+        if hasattr(self, 'knowledge_graph') and self.knowledge_graph:
+            try:
+                relationships = self.knowledge_graph.get_relationships(entity['id'])
+                if relationships:
+                    elements.append("\n**Relationships:**")
+                    for rel in relationships:
+                        target_name = self.knowledge_graph.get_entity_name(rel['target_id'])
+                        elements.append(f"- {rel['type']}: {target_name}")
+            except Exception as e:
+                logger.debug(f"Error getting relationships: {str(e)}")
+        
+        return "\n".join(elements) 

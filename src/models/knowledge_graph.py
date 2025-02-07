@@ -272,19 +272,46 @@ class HatchyKnowledgeGraph:
                 self._attribute_index[attr][str(value)].discard(entity_id)
 
     def _extract_generation(self, source: Optional[str], entity: Dict[str, Any]) -> Optional[str]:
-        """Extract generation info from source or entity data."""
-        # Try entity data first
-        generation = entity.get('attributes', {}).get('generation')
-        if generation:
-            return str(generation)
+        """Extract generation info from source or entity data with enhanced fallbacks."""
+        try:
+            # Priority 1: Direct generation attribute
+            if 'generation' in entity.get('attributes', {}):
+                return str(entity['attributes']['generation'])
             
-        # Try filename pattern if source is provided
-        if source:
-            gen_match = re.search(r'gen(?:eration)?[\s\-_]*(\d+)', source, re.IGNORECASE)
-            if gen_match:
-                return gen_match.group(1)
-                
-        return None
+            # Priority 2: Generation in metadata
+            if '_metadata' in entity and 'generation' in entity['_metadata']:
+                return str(entity['_metadata']['generation'])
+            if 'metadata' in entity and 'generation' in entity['metadata']:
+                return str(entity['metadata']['generation'])
+            
+            # Priority 3: Extract from source filename
+            if source:
+                # Try different generation patterns
+                patterns = [
+                    r'gen(?:eration)?[\s\-_]*(\d+)',
+                    r'(?:gen|generation)\s*(\d+)',
+                    r'gen-?(\d+)',
+                    r'_g(\d+)_'
+                ]
+                for pattern in patterns:
+                    if match := re.search(pattern, source, re.IGNORECASE):
+                        return match.group(1)
+            
+            # Priority 4: Look for generation in description
+            if 'Description' in entity:
+                desc = entity['Description'].lower()
+                if 'generation 1' in desc or 'gen 1' in desc or 'gen-1' in desc:
+                    return '1'
+                elif 'generation 2' in desc or 'gen 2' in desc or 'gen-2' in desc:
+                    return '2'
+                elif 'generation 3' in desc or 'gen 3' in desc or 'gen-3' in desc:
+                    return '3'
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error extracting generation: {str(e)}")
+            return None
 
     def add_entity(
         self,
@@ -718,14 +745,36 @@ class HatchyKnowledgeGraph:
     
     def _prepare_entity_for_output(self, entity: Dict[str, Any]) -> Dict[str, Any]:
         """Prepare entity for output by flattening attributes."""
-        output = {
-            'id': entity['id'],
-            'name': entity['name'],
-            'entity_type': entity['entity_type'],
-            **entity['attributes'],  # Flatten attributes to top level
-            '_metadata': entity['_metadata']
-        }
-        return output
+        try:
+            # Handle both dictionary and sequence types
+            if isinstance(entity, (list, tuple)):
+                return {
+                    'id': entity[0],
+                    'name': str(entity[1]) if len(entity) > 1 else 'Unknown',
+                    'entity_type': str(entity[2]) if len(entity) > 2 else 'unknown',
+                    'attributes': entity[3] if len(entity) > 3 else {},
+                    'metadata': entity[4] if len(entity) > 4 else {}
+                }
+            
+            # For dictionary type, ensure all fields exist
+            output = {
+                'id': entity.get('id', str(uuid.uuid4())),
+                'name': entity.get('name', 'Unknown'),
+                'entity_type': entity.get('entity_type', 'unknown'),
+                **entity.get('attributes', {}),  # Flatten attributes
+                'metadata': entity.get('metadata', {})  # Use 'metadata' instead of '_metadata'
+            }
+            
+            return output
+            
+        except Exception as e:
+            logger.error(f"Error preparing entity for output: {str(e)}")
+            return {
+                'id': str(uuid.uuid4()),
+                'name': 'Error',
+                'entity_type': 'unknown',
+                'metadata': {'error': str(e)}
+            }
     
     def get_relationships(
         self,
@@ -1002,10 +1051,28 @@ class HatchyKnowledgeGraph:
             
             # Size/mountable relationships
             description = entity.get('Description', '').lower()
-            if any(kw in description for kw in ['large', 'huge', 'massive']):
-                gen = entity.get('_metadata', {}).get('generation')
-                if gen == '3' or 'final' in description:
-                    self.add_relationship(entity_id, 'mountable', 'can_be_mounted')
+            size_keywords = ['large', 'huge', 'massive', 'giant', 'enormous', 'colossal']
+            if any(kw in description for kw in size_keywords):
+                # Get generation from multiple sources
+                gen = None
+                if 'generation' in entity.get('attributes', {}):
+                    gen = str(entity['attributes']['generation'])
+                elif '_metadata' in entity and 'generation' in entity['_metadata']:
+                    gen = str(entity['_metadata']['generation'])
+                elif 'metadata' in entity and 'generation' in entity['metadata']:
+                    gen = str(entity['metadata']['generation'])
+                
+                # Check generation and description for mountable status
+                if gen == '3' or 'final' in description or any(
+                    term in description for term in 
+                    ['can be ridden', 'mountable', 'rideable', 'can ride']
+                ):
+                    self.add_relationship(
+                        entity_id,
+                        'mountable',
+                        'can_be_mounted',
+                        metadata={'confidence': 0.9}
+                    )
             
             # Faction relationships
             if 'Faction' in entity:
