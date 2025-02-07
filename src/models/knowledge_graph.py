@@ -440,49 +440,66 @@ class HatchyKnowledgeGraph:
         entity_type: Optional[str] = None,
         filters: Optional[Dict[str, Any]] = None,
         limit: int = 10,
-        file_filter: Optional[str] = None
+        file_filter: Optional[str] = None,
+        fuzzy_match: bool = False
     ) -> List[Dict[str, Any]]:
-        """Search entities using indexes for better performance."""
-        results = set()
+        """Search entities by name or attributes."""
+        results = []
         query = query.lower()
         
-        # Use type index if specified
-        candidate_ids = (
-            self._type_index.get(entity_type, set())
-            if entity_type
-            else set(self.entities.keys())
-        )
-        
-        # Apply filters using attribute index
-        if filters:
-            for attr, value in filters.items():
-                if attr in self._attribute_index:
-                    matching_ids = self._attribute_index[attr].get(str(value), set())
-                    candidate_ids &= matching_ids
-        
-        # Search through candidates
-        for entity_id in candidate_ids:
-            entity = self.entities[entity_id]
-            
-            # Check if entity matches file filter
-            if file_filter and entity.get('source') != file_filter:
-                continue
-            
-            # Check name match
-            if query in entity['name'].lower():
-                results.add(entity_id)
+        for entity_id, entity in self.entities.items():
+            try:
+                # Skip if entity_type doesn't match
+                if entity_type and entity.get('entity_type') != entity_type:
+                    continue
+                    
+                # Apply filters if provided
+                if filters:
+                    skip = False
+                    for key, value in filters.items():
+                        entity_value = entity.get(key) or entity.get('attributes', {}).get(key)
+                        if not entity_value or str(entity_value).lower() != str(value).lower():
+                            skip = True
+                            break
+                    if skip:
+                        continue
+                
+                # Check if entity matches file filter
+                if file_filter and entity.get('source') != file_filter:
+                    continue
+                
+                # Check name match
+                name = entity.get('name', '')
+                if name:
+                    if fuzzy_match:
+                        # Fuzzy matching - check if query is a substring or if words overlap
+                        if (query in name.lower() or 
+                            name.lower() in query or 
+                            any(word in name.lower().split() for word in query.split())):
+                            results.append(self._prepare_entity_for_output(entity))
+                            continue
+                    else:
+                        # Exact matching
+                        if query in name.lower():
+                            results.append(self._prepare_entity_for_output(entity))
+                            continue
+                    
+                # Check attributes
+                attributes = entity.get('attributes', {})
+                if any(
+                    isinstance(v, str) and query in str(v).lower()
+                    for v in attributes.values()
+                ):
+                    results.append(self._prepare_entity_for_output(entity))
+                    
                 if len(results) >= limit:
                     break
-            
-            # Check attributes
-            if len(results) < limit:
-                for value in entity.get('attributes', {}).values():
-                    if isinstance(value, str) and query in value.lower():
-                        results.add(entity_id)
-                        if len(results) >= limit:
-                            break
+                    
+            except Exception as e:
+                logger.error(f"Error processing entity {entity_id}: {str(e)}")
+                continue
         
-        return [self._prepare_entity_for_output(self.entities[eid]) for eid in results]
+        return results
 
     def check_data_integrity(self) -> Dict[str, Any]:
         """Perform comprehensive data integrity check."""
@@ -686,62 +703,6 @@ class HatchyKnowledgeGraph:
             if entity['name'].lower() == name_lower:
                 return entity
         return None
-    
-    def search_entities(
-        self,
-        query: str,
-        entity_type: Optional[str] = None,
-        filters: Optional[Dict[str, Any]] = None,
-        limit: int = 10,
-        file_filter: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
-        """Search entities by name or attributes."""
-        results = []
-        query = query.lower()
-        
-        for entity_id, entity in self.entities.items():
-            try:
-                # Skip if entity_type doesn't match
-                if entity_type and entity.get('entity_type') != entity_type:
-                    continue
-                    
-                # Apply filters if provided
-                if filters:
-                    skip = False
-                    for key, value in filters.items():
-                        entity_value = entity.get(key) or entity.get('attributes', {}).get(key)
-                        if not entity_value or str(entity_value).lower() != str(value).lower():
-                            skip = True
-                            break
-                    if skip:
-                        continue
-                
-                # Check if entity matches file filter
-                if file_filter and entity.get('source') != file_filter:
-                    continue
-                
-                # Check name match
-                name = entity.get('name', '')
-                if name and query in name.lower():
-                    results.append(self._prepare_entity_for_output(entity))
-                    continue
-                    
-                # Check attributes
-                attributes = entity.get('attributes', {})
-                if any(
-                    isinstance(v, str) and query in str(v).lower()
-                    for v in attributes.values()
-                ):
-                    results.append(self._prepare_entity_for_output(entity))
-                    
-                if len(results) >= limit:
-                    break
-                    
-            except Exception as e:
-                logger.error(f"Error processing entity {entity_id}: {str(e)}")
-                continue
-        
-        return results
     
     def _prepare_entity_for_output(self, entity: Dict[str, Any]) -> Dict[str, Any]:
         """Prepare entity for output by flattening attributes."""

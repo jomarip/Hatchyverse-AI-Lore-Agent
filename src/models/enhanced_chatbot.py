@@ -787,6 +787,40 @@ class EnhancedChatbot:
         contexts = []
         query_lower = query.lower()
         
+        # Check for comparison queries
+        if any(term in query_lower for term in ['similar', 'compare', 'difference', 'like']):
+            # Extract entity names using proper noun detection
+            entities = []
+            for name in re.findall(r'\b[A-Z][a-z]+\b', query):
+                entity_id = self.knowledge_graph.find_entity_by_name(name, fuzzy_match=True)
+                if entity_id:
+                    entity = self.knowledge_graph.get_entity(entity_id)
+                    if entity:
+                        entities.append(entity)
+                        # Get element and other key attributes
+                        element = entity.get('attributes', {}).get('element') or entity.get('element')
+                        if element:
+                            contexts.append({
+                                'text_content': f"{entity['name']} is a {element} type {entity['entity_type']}",
+                                'metadata': {'source': 'knowledge_graph', 'type': 'element_info'}
+                            })
+                        # Get relationships
+                        relationships = self.knowledge_graph.get_relationships(entity['id'])
+                        for rel in relationships:
+                            contexts.append({
+                                'text_content': self._format_relationship(rel),
+                                'metadata': {'source': 'knowledge_graph', 'type': 'relationship'}
+                            })
+            
+            # Add comparison context if we found multiple entities
+            if len(entities) > 1:
+                similarities = self._find_similarities(entities)
+                for similarity in similarities:
+                    contexts.append({
+                        'text_content': similarity,
+                        'metadata': {'source': 'knowledge_graph', 'type': 'comparison'}
+                    })
+        
         # Check for generation-specific queries
         gen_match = re.search(r'gen(?:eration)?[\s\-]*(\d+)', query_lower)
         if gen_match:
@@ -1009,3 +1043,29 @@ class EnhancedChatbot:
             chunks.append(' '.join(current_chunk))
             
         return chunks 
+
+    def _find_similarities(self, entities: List[Dict[str, Any]]) -> List[str]:
+        """Find similarities between entities."""
+        similarities = []
+        
+        # Compare elements
+        elements = [e.get('attributes', {}).get('element') or e.get('element') for e in entities]
+        if len(set(elements)) == 1 and elements[0]:
+            similarities.append(f"All entities are {elements[0]} type.")
+        
+        # Compare types
+        types = [e.get('entity_type') for e in entities]
+        if len(set(types)) == 1:
+            similarities.append(f"All entities are of type {types[0]}.")
+        
+        # Compare generations
+        generations = [e.get('attributes', {}).get('generation') for e in entities]
+        if len(set(generations)) == 1 and generations[0]:
+            similarities.append(f"All entities are Generation {generations[0]}.")
+        
+        # Compare evolution stages
+        stages = [e.get('attributes', {}).get('evolution_stage') for e in entities]
+        if len(set(stages)) == 1 and stages[0]:
+            similarities.append(f"All entities are at evolution stage {stages[0]}.")
+        
+        return similarities 
