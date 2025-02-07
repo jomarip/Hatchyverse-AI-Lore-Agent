@@ -1,8 +1,9 @@
+import os
+import sys
 import logging
 from pathlib import Path
 from dotenv import load_dotenv
 from langchain_openai import OpenAIEmbeddings
-import os
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.language_models import BaseLLM
 from langchain_openai import ChatOpenAI
@@ -12,6 +13,12 @@ from src.models.enhanced_chatbot import EnhancedChatbot
 from src.models.contextual_retriever import ContextualRetriever
 from langchain_community.vectorstores import Chroma
 from langchain.schema import Document
+from langchain.vectorstores import FAISS
+import json
+
+# Add project root to Python path
+project_root = Path(__file__).parent
+sys.path.append(str(project_root))
 
 # Configure logging
 logging.basicConfig(
@@ -282,4 +289,127 @@ if __name__ == "__main__":
         level=logging.DEBUG,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
-    main() 
+    main()
+
+def load_knowledge_graph():
+    """Load the latest knowledge graph."""
+    graph_path = Path("knowledge_graphs/knowledge_graph_latest.json")
+    if not graph_path.exists():
+        raise FileNotFoundError("Knowledge graph not found. Run build_knowledge_graph.py first.")
+        
+    with open(graph_path, 'r') as f:
+        graph_data = json.load(f)
+    return HatchyKnowledgeGraph.from_dict(graph_data)
+
+def initialize_components():
+    """Initialize all required components."""
+    # Set up logging
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
+    
+    try:
+        # Load knowledge graph
+        logger.info("Loading knowledge graph...")
+        knowledge_graph = load_knowledge_graph()
+        
+        # Initialize LLM
+        llm = ChatOpenAI(
+            model_name="gpt-4",
+            temperature=0.7
+        )
+        
+        # Set up vector store
+        logger.info("Setting up vector store...")
+        data_dir = Path("data")
+        text_files = [
+            "Hatchy World Comic_ Chaos saga.txt",
+            "Hatchy World _ world design.txt",
+            "HWCS - Simplified main arc and arc suggestions.txt",
+            "Hatchyverse Eco Presentation v3.txt"
+        ]
+        
+        texts = []
+        for file in text_files:
+            try:
+                with open(data_dir / file, 'r', encoding='utf-8') as f:
+                    texts.append(f.read())
+            except Exception as e:
+                logger.error(f"Error loading {file}: {str(e)}")
+        
+        embeddings = OpenAIEmbeddings()
+        vector_store = FAISS.from_texts(texts, embeddings)
+        
+        # Initialize retriever
+        retriever = ContextualRetriever(
+            knowledge_graph,
+            vector_store
+        )
+        
+        # Initialize chatbot
+        relationship_registry = RelationshipRegistry()
+        chatbot = EnhancedChatbot(llm)
+        
+        return chatbot
+        
+    except Exception as e:
+        logger.error(f"Error initializing components: {str(e)}")
+        raise
+
+def run_test_queries(chatbot):
+    """Run a set of test queries."""
+    test_queries = [
+        "what is Omniterra",
+        "How many Gen1 Hatchy are there?",
+        "Can you list the Gen1 Fire hatchy?",
+        "How are Firret and FIradactus similar?",
+        "What can you tell me about Ixor?",
+        "What Gen1 and Gen2 hatchy are potentially rideable?",
+        "What armor piece(s) are related to buzzkill?"
+    ]
+    
+    session_id = "interactive_test"
+    
+    for query in test_queries:
+        print(f"\n=== Testing: {query} ===")
+        try:
+            response = chatbot.process_message(session_id, query)
+            print(f"Response: {response['response']}")
+            print(f"Confidence: {response.get('confidence', 'N/A')}")
+            if 'sources' in response:
+                print("Sources used:", response['sources'])
+        except Exception as e:
+            print(f"Error processing query: {str(e)}")
+        input("\nPress Enter to continue...")
+
+def interactive_mode(chatbot):
+    """Run in interactive mode."""
+    session_id = "interactive_session"
+    print("\nEntering interactive mode. Type 'exit' to quit.")
+    
+    while True:
+        query = input("\nEnter your query: ").strip()
+        if query.lower() == 'exit':
+            break
+            
+        try:
+            response = chatbot.process_message(session_id, query)
+            print(f"\nResponse: {response['response']}")
+            print(f"Confidence: {response.get('confidence', 'N/A')}")
+            if 'sources' in response:
+                print("Sources used:", response['sources'])
+        except Exception as e:
+            print(f"Error: {str(e)}")
+
+if __name__ == "__main__":
+    # Initialize components
+    chatbot = initialize_components()
+    
+    # Ask user for mode
+    mode = input("Select mode (1: Test queries, 2: Interactive): ").strip()
+    
+    if mode == "1":
+        run_test_queries(chatbot)
+    elif mode == "2":
+        interactive_mode(chatbot)
+    else:
+        print("Invalid mode selected.") 

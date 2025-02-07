@@ -8,6 +8,8 @@ import csv
 import json
 from pathlib import Path
 from .knowledge_graph import HatchyKnowledgeGraph
+from .relationship_extractor import AdaptiveRelationshipExtractor
+from ..data.cleaners import DataCleaner
 
 logger = logging.getLogger(__name__)
 
@@ -84,10 +86,11 @@ class RelationshipExtractor:
 class EnhancedDataLoader:
     """Enhanced data loader with relationship extraction and validation."""
     
-    def __init__(self, knowledge_graph: HatchyKnowledgeGraph):
+    def __init__(self, knowledge_graph: HatchyKnowledgeGraph, llm_client=None):
         self.knowledge_graph = knowledge_graph
+        self.cleaner = DataCleaner()
         self.logger = logging.getLogger(__name__)
-        self.relationship_extractor = RelationshipExtractor()
+        self.relationship_extractor = AdaptiveRelationshipExtractor(llm_client)
         self.data_dir = None
         
     def set_data_directory(self, data_dir: Path):
@@ -161,120 +164,219 @@ class EnhancedDataLoader:
                 
         return loaded_entities
 
-    def _process_relationships(self, entity_id: str, entity_data: Dict[str, Any]):
-        """Process relationships for an entity."""
-        relationships_created = []
-        
+    def _resolve_or_create_faction(self, faction_name: str) -> str:
+        """Ensure faction entity exists and return its ID."""
         try:
-            logger.debug(f"Processing relationships for entity {entity_id}")
-            logger.debug(f"Entity data: {entity_data}")
+            # Clean and validate faction name
+            faction_name = str(faction_name).strip()
+            if not faction_name or faction_name.lower() in ['none', 'n/a', '-', '', 'nan']:
+                return None
             
-            # Handle element relationships
-            if 'Element' in entity_data:
-                element_value = str(entity_data['Element']).strip()
-                logger.debug(f"Found Element value: {element_value}")
-                if element_value.lower() not in ['none', 'n/a', '-', '', 'nan']:
-                    # Handle special cases
-                    if element_value.lower() == 'both':
-                        elements = ['Light', 'Dark']
-                    elif element_value.lower() == 'lunar':
-                        elements = ['Light']  # Map Lunar to Light element
-                    else:
-                        elements = [element_value]
-                    
-                    logger.debug(f"Processing elements: {elements}")
-                    for element in elements:
-                        element_entity = self.knowledge_graph.find_entity_by_name(element.capitalize())
-                        if element_entity:
-                            try:
-                                logger.debug(f"Adding element relationship: {entity_id} -> {element_entity['id']} (has_element)")
-                                self.knowledge_graph.add_relationship(
-                                    entity_id,
-                                    element_entity['id'],
-                                    'has_element'
-                                )
-                                relationships_created.append(('has_element', element))
-                                logger.debug(f"Successfully added element relationship for {element}")
-                            except Exception as e:
-                                logger.error(f"Failed to create element relationship with {element}: {str(e)}")
-                        else:
-                            logger.warning(f"Element entity not found: {element}")
+            # Try to find existing faction
+            existing = self.knowledge_graph.find_entity_by_name(faction_name)
+            if existing and existing.get('entity_type') == 'faction':
+                logger.debug(f"Found existing faction: {faction_name}")
+                return existing['id']
             
-            # Handle evolution relationships
-            if 'Evolves From' in entity_data:
-                evolves_from = str(entity_data['Evolves From']).strip()
-                logger.debug(f"Found Evolves From value: {evolves_from}")
-                if evolves_from.lower() not in ['none', 'n/a', '-', '', 'nan']:
-                    # Handle comma-separated values
-                    for parent_name in [p.strip() for p in evolves_from.split(',')]:
-                        if parent_name:
-                            parent = self.knowledge_graph.find_entity_by_name(parent_name)
-                            if parent:
-                                try:
-                                    logger.debug(f"Adding evolution relationship: {entity_id} -> {parent['id']} (evolves_from)")
-                                    self.knowledge_graph.add_relationship(
-                                        entity_id,
-                                        parent['id'],
-                                        'evolves_from'
-                                    )
-                                    relationships_created.append(('evolves_from', parent_name))
-                                    logger.debug(f"Successfully added evolution relationship for {parent_name}")
-                                except Exception as e:
-                                    logger.error(f"Failed to create evolution relationship with {parent_name}: {str(e)}")
-                            else:
-                                logger.warning(f"Parent entity not found: {parent_name}")
+            # Create new faction entity
+            logger.debug(f"Creating new faction entity: {faction_name}")
+            faction_id = self.knowledge_graph.add_entity(
+                name=faction_name,
+                entity_type='faction',
+                attributes={
+                    'name': faction_name,
+                    'faction_type': 'political',
+                    'description': f"Political faction known as {faction_name}"
+                },
+                metadata={'source': 'auto-generated'},
+                source='auto-generated'
+            )
+            logger.info(f"Created new faction entity: {faction_name} ({faction_id})")
+            return faction_id
+        except Exception as e:
+            logger.error(f"Error resolving faction {faction_name}: {str(e)}")
+            return None
+
+    def _process_relationships(self, entity_id: str, entity_data: dict) -> List[Dict[str, Any]]:
+        """Process and store entity relationships with improved handling."""
+        try:
+            relationships_created = []
             
-            # Handle habitat relationships
-            if 'Habitat' in entity_data:
-                habitat = str(entity_data['Habitat']).strip()
-                logger.debug(f"Found Habitat value: {habitat}")
-                if habitat.lower() not in ['none', 'n/a', '-', '', 'nan']:
-                    # Handle comma-separated values
-                    for location in [loc.strip() for loc in habitat.split(',')]:
-                        if location:
-                            # Create location entity if it doesn't exist
-                            location_entity = self.knowledge_graph.find_entity_by_name(location)
-                            if not location_entity:
-                                try:
-                                    logger.debug(f"Creating new location entity: {location}")
-                                    location_id = self.knowledge_graph.add_entity(
-                                        name=location,
-                                        entity_type='location',
-                                        attributes={'name': location}
-                                    )
-                                    location_entity = self.knowledge_graph.get_entity(location_id)
-                                    logger.debug(f"Successfully created location entity: {location}")
-                                except Exception as e:
-                                    logger.error(f"Failed to create location entity {location}: {str(e)}")
-                                    continue
-                            
-                            if location_entity:
-                                try:
-                                    logger.debug(f"Adding habitat relationship: {entity_id} -> {location_entity['id']} (lives_in)")
-                                    self.knowledge_graph.add_relationship(
-                                        entity_id,
-                                        location_entity['id'],
-                                        'lives_in'
-                                    )
-                                    relationships_created.append(('lives_in', location))
-                                    logger.debug(f"Successfully added habitat relationship for {location}")
-                                except Exception as e:
-                                    logger.error(f"Failed to create habitat relationship with {location}: {str(e)}")
+            # Clean entity data first
+            cleaned_data = self.cleaner.clean_entity_data(entity_data)
             
-            # Log successful relationships
+            # Process standard relationships (Element, Faction, etc)
+            if 'element' in cleaned_data and cleaned_data['element']:
+                element_name = cleaned_data['element']
+                element_id = self.knowledge_graph.resolve_or_create_entity(
+                    name=element_name,
+                    entity_type='element',
+                    attributes={'name': element_name}
+                )
+                if element_id:
+                    rel_id = self.knowledge_graph.add_relationship(
+                        source_id=entity_id,
+                        target_id=element_id,
+                        relationship_type='has_element',
+                        metadata={'confidence': 1.0}
+                    )
+                    if rel_id:
+                        relationships_created.append(('has_element', element_name))
+                        self.logger.debug(f"Created element relationship: {entity_id} -has_element-> {element_name}")
+
+            # Process faction relationships
+            if 'faction' in cleaned_data and cleaned_data['faction']:
+                faction_name = cleaned_data['faction']
+                faction_id = self.knowledge_graph.resolve_or_create_entity(
+                    name=faction_name,
+                    entity_type='faction',
+                    attributes={'name': faction_name}
+                )
+                if faction_id:
+                    rel_id = self.knowledge_graph.add_relationship(
+                        source_id=entity_id,
+                        target_id=faction_id,
+                        relationship_type='member_of',
+                        metadata={'confidence': 0.9}
+                    )
+                    if rel_id:
+                        relationships_created.append(('member_of', faction_name))
+
+            # Process evolution relationships
+            if 'evolves_from' in cleaned_data and cleaned_data['evolves_from']:
+                target_name = cleaned_data['evolves_from']
+                target_id = self.knowledge_graph.resolve_or_create_entity(
+                    name=target_name,
+                    entity_type='monster',
+                    attributes={'name': target_name}
+                )
+                if target_id:
+                    rel_id = self.knowledge_graph.add_relationship(
+                        source_id=entity_id,
+                        target_id=target_id,
+                        relationship_type='evolves_from',
+                        metadata={'confidence': 0.95}
+                    )
+                    if rel_id:
+                        relationships_created.append(('evolves_from', target_name))
+
+            # Process political conflicts and tensions
+            political_fields = ['Political Conflict', 'Political Tensions', 'Conflict leading to Corruption']
+            for field in political_fields:
+                if field in cleaned_data and cleaned_data[field]:
+                    # Extract relationships from political text
+                    extracted = self._extract_political_relationships(cleaned_data[field])
+                    for rel in extracted:
+                        target_id = self.knowledge_graph.resolve_or_create_entity(
+                            name=rel['target'],
+                            entity_type='faction',
+                            attributes={'name': rel['target']}
+                        )
+                        if target_id:
+                            rel_id = self.knowledge_graph.add_relationship(
+                                source_id=entity_id,
+                                target_id=target_id,
+                                relationship_type=rel['type'],
+                                metadata={'confidence': rel.get('confidence', 0.8)}
+                            )
+                            if rel_id:
+                                relationships_created.append((rel['type'], rel['target']))
+
+            # Process character relationships from descriptions
+            if 'Character Description' in cleaned_data:
+                desc = cleaned_data['Character Description']
+                subplot = cleaned_data.get('Subplot and Relationship to Main Plot', '')
+                extracted = self._extract_character_relationships(desc + ' ' + subplot)
+                for rel in extracted:
+                    target_id = self.knowledge_graph.resolve_or_create_entity(
+                        name=rel['target'],
+                        entity_type='faction',
+                        attributes={'name': rel['target']}
+                    )
+                    if target_id:
+                        rel_id = self.knowledge_graph.add_relationship(
+                            source_id=entity_id,
+                            target_id=target_id,
+                            relationship_type=rel['type'],
+                            metadata={'confidence': rel.get('confidence', 0.8)}
+                        )
+                        if rel_id:
+                            relationships_created.append((rel['type'], rel['target']))
+
+            # Log relationship creation results meaningfully
             if relationships_created:
                 entity_name = self.knowledge_graph.get_entity(entity_id)['name']
-                logger.info(f"Created {len(relationships_created)} relationships for {entity_name}:")
+                self.logger.info(f"Created {len(relationships_created)} relationships for {entity_name}:")
                 for rel_type, target in relationships_created:
-                    logger.info(f"  - {entity_name} -{rel_type}-> {target}")
-            else:
-                logger.debug("No relationships created for this entity")
-            
+                    self.logger.info(f"  - {entity_name} -{rel_type}-> {target}")
+            elif self.logger.isEnabledFor(logging.DEBUG):
+                self.logger.debug("No relationships created - no valid relationship data found")
+
             return relationships_created
-        
+
         except Exception as e:
-            logger.error(f"Error processing relationships for entity {entity_id}: {str(e)}")
+            self.logger.error(f"Error processing relationships for entity {entity_id}: {str(e)}")
             return []
+
+    def _extract_political_relationships(self, text: str) -> List[Dict[str, str]]:
+        """Extract relationships from political text with improved accuracy."""
+        relationships = []
+        
+        # Define political relationship patterns with confidence scores
+        patterns = [
+            (r'(opposes|conflicts? with|at war with) (?:the )?([^,.]+)', 'opposes', 0.9),
+            (r'(allied with|supports?) (?:the )?([^,.]+)', 'allied_with', 0.9),
+            (r'(controls?|rules?|governs?) (?:the )?([^,.]+)', 'controls', 0.8),
+            (r'(member of|part of|belongs to) (?:the )?([^,.]+)', 'member_of', 0.9),
+            (r'(leads?|commands?) (?:the )?([^,.]+)', 'leads', 0.9),
+            (r'(rebels? against|resistance to) (?:the )?([^,.]+)', 'rebels_against', 0.8)
+        ]
+        
+        for pattern, rel_type, confidence in patterns:
+            matches = re.finditer(pattern, text, re.IGNORECASE)
+            for match in matches:
+                target = match.group(2).strip()
+                if target and target.lower() not in ['none', 'n/a', '-', '', 'nan']:
+                    # Clean target name
+                    target = self.cleaner.clean_faction_name(target)
+                    if target:
+                        relationships.append({
+                            'type': rel_type,
+                            'target': target,
+                            'confidence': confidence
+                        })
+        
+        return relationships
+
+    def _extract_character_relationships(self, text: str) -> List[Dict[str, str]]:
+        """Extract relationships from character descriptions with improved accuracy."""
+        relationships = []
+        
+        # Define character relationship patterns with confidence scores
+        patterns = [
+            (r'leader of (?:the )?([^,.]+)', 'leads', 0.9),
+            (r'member of (?:the )?([^,.]+)', 'member_of', 0.9),
+            (r'allied with (?:the )?([^,.]+)', 'allied_with', 0.8),
+            (r'opposes (?:the )?([^,.]+)', 'opposes', 0.8),
+            (r'serves (?:the )?([^,.]+)', 'serves', 0.9),
+            (r'commands (?:the )?([^,.]+)', 'commands', 0.9)
+        ]
+        
+        for pattern, rel_type, confidence in patterns:
+            matches = re.finditer(pattern, text, re.IGNORECASE)
+            for match in matches:
+                target = match.group(1).strip()
+                if target and target.lower() not in ['none', 'n/a', '-', '', 'nan']:
+                    # Clean target name
+                    target = self.cleaner.clean_faction_name(target)
+                    if target:
+                        relationships.append({
+                            'type': rel_type,
+                            'target': target,
+                            'confidence': confidence
+                        })
+        
+        return relationships
 
     def _convert_numeric(self, value: Any, field: str) -> Optional[float]:
         """Convert numeric values safely."""

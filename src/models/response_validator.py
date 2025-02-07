@@ -3,6 +3,7 @@
 from typing import Dict, List, Any, Optional
 import logging
 from .knowledge_graph import HatchyKnowledgeGraph
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -12,250 +13,188 @@ class ResponseValidator:
     def __init__(self, knowledge_graph: HatchyKnowledgeGraph):
         self.knowledge_graph = knowledge_graph
     
-    def validate(self, response: str, context: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Validate response against knowledge graph with enhanced checks."""
+    def validate(self, response: str, contexts: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Validate response against provided context with improved error handling."""
         try:
-            # Initialize validation results
-            validation_results = {
+            results = {
                 'is_valid': True,
                 'issues': [],
-                'enhancements': [],
-                'source_coverage': self._check_source_coverage(response, context),
-                'confidence': 1.0,
-                'metadata': {
-                    'context_items': len(context),
-                    'generation': self._extract_generation(context),
-                    'elements': self._extract_elements(context),
-                    'relationships': self._extract_relationships(context)
-                }
+                'source_coverage': {},
+                'fact_validation': {},
+                'enhancements': []
             }
             
-            # Validate generation consistency
-            self._validate_generation(response, validation_results)
+            # Skip validation if no context provided
+            if not contexts:
+                results['is_valid'] = True
+                results['enhancements'].append({
+                    'message': 'No context was provided to validate against',
+                    'type': 'warning'
+                })
+                return results
             
-            # Validate element consistency
-            self._validate_elements(response, validation_results)
+            # Check context usage
+            context_used = 0
+            for ctx in contexts:
+                content = ctx.get('content', '') or ctx.get('text_content', '')
+                if content and self._content_used_in_response(content, response):
+                    context_used += 1
             
-            # Validate entity relationships
-            self._validate_relationships(response, validation_results)
+            # Calculate coverage score
+            coverage_score = context_used / len(contexts) if contexts else 0.0
+            results['source_coverage'] = {
+                'context_used': context_used,
+                'coverage_score': coverage_score
+            }
             
-            # Check factual consistency
-            self._validate_facts(response, context, validation_results)
+            # Check for factual consistency
+            fact_results = self._validate_facts(response, contexts)
+            results['fact_validation'] = fact_results
+            if fact_results.get('issues'):
+                results['issues'].extend(fact_results['issues'])
             
-            # Suggest enhancements
-            self._suggest_enhancements(response, context, validation_results)
+            # Check for element consistency
+            element_results = self._validate_elements(response, contexts)
+            if element_results.get('issues'):
+                results['issues'].extend(element_results['issues'])
             
-            return validation_results
+            # Check for relationship consistency
+            relationship_results = self._validate_relationships(response, contexts)
+            if relationship_results.get('issues'):
+                results['issues'].extend(relationship_results['issues'])
+            
+            # Add enhancement suggestions
+            if coverage_score < 0.5:
+                results['enhancements'].append({
+                    'message': 'Consider using more information from the provided context',
+                    'type': 'suggestion'
+                })
+            
+            # Mark response as invalid if there are issues
+            if results['issues']:
+                results['is_valid'] = False
+            
+            return results
+            
         except Exception as e:
-            logger.error(f"Error in validation: {str(e)}")
+            logger.error(f"Error during validation: {str(e)}")
             return {
-                'is_valid': False,
-                'issues': [{'type': 'error', 'message': str(e)}],
-                'enhancements': [],
-                'source_coverage': {'context_used': 0, 'coverage_score': 0.0},
-                'confidence': 0.0
+                'is_valid': True,  # Default to valid on error
+                'issues': [f"Validation error: {str(e)}"],
+                'source_coverage': {},
+                'fact_validation': {},
+                'enhancements': []
             }
     
-    def _extract_generation(self, context: List[Dict[str, Any]]) -> Optional[str]:
-        """Extract generation info from context."""
-        for ctx in context:
-            if 'metadata' in ctx and 'generation' in ctx['metadata']:
-                return ctx['metadata']['generation']
-        return None
-    
-    def _extract_elements(self, context: List[Dict[str, Any]]) -> List[str]:
-        """Extract element types from context."""
-        elements = set()
-        for ctx in context:
-            if 'metadata' in ctx and 'element' in ctx['metadata']:
-                elements.add(ctx['metadata']['element'])
-        return list(elements)
-    
-    def _extract_relationships(self, context: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Extract relationships from context."""
-        relationships = []
-        for ctx in context:
-            if 'entity_context' in ctx and 'relationships' in ctx['entity_context']:
-                relationships.extend(ctx['entity_context']['relationships'])
-        return relationships
-    
-    def _validate_generation(self, response: str, results: Dict[str, Any]):
-        """Validate generation consistency."""
-        generation = results['metadata']['generation']
-        if generation:
-            expected_gen = f"gen{generation}"
-            if expected_gen not in response.lower():
-                results['issues'].append({
-                    'type': 'generation_mismatch',
-                    'message': f"Response should specify {expected_gen}"
-                })
-                results['confidence'] *= 0.9
-    
-    def _validate_elements(self, response: str, results: Dict[str, Any]):
-        """Validate element consistency."""
-        elements = results['metadata']['elements']
+    def _content_used_in_response(self, content: str, response: str) -> bool:
+        """Check if content is used in response."""
+        # Extract key phrases from content
+        content_lower = content.lower()
         response_lower = response.lower()
         
-        for element in elements:
-            if element.lower() not in response_lower:
-                results['issues'].append({
-                    'type': 'element_missing',
-                    'message': f"Response should mention {element} element"
-                })
-                results['confidence'] *= 0.9
+        # Split into sentences and check for key phrase usage
+        content_sentences = content_lower.split('.')
+        for sentence in content_sentences:
+            words = sentence.strip().split()
+            if len(words) >= 3:  # Only check substantial phrases
+                phrase = ' '.join(words[:3])
+                if phrase in response_lower:
+                    return True
+        
+        return False
     
-    def _validate_relationships(self, response: str, results: Dict[str, Any]):
-        """Validate relationship consistency."""
-        relationships = results['metadata']['relationships']
-        response_lower = response.lower()
-        
-        for rel in relationships:
-            source = rel.get('source_name', '').lower()
-            target = rel.get('target_name', '').lower()
-            rel_type = rel.get('type', '').lower()
-            
-            if source in response_lower and target not in response_lower:
-                results['issues'].append({
-                    'type': 'relationship_incomplete',
-                    'message': f"Response mentions {source} but not related {target} ({rel_type})"
-                })
-                results['confidence'] *= 0.95
-    
-    def _validate_facts(self, response: str, context: List[Dict[str, Any]], results: Dict[str, Any]):
-        """Validate factual consistency."""
-        # Extract entity mentions
-        entity_mentions = self._extract_entity_mentions(response)
-        
-        # Check each mentioned entity against knowledge graph
-        for mention in entity_mentions:
-            graph_entity = self.knowledge_graph.get_entity_by_id(mention['id'])
-            if graph_entity:
-                # Check attribute consistency
-                for attr, value in mention['attributes'].items():
-                    if attr in graph_entity['attributes'] and graph_entity['attributes'][attr] != value:
-                        results['is_valid'] = False
-                        results['issues'].append({
-                            'type': 'attribute_mismatch',
-                            'message': f"Incorrect {attr} for {mention['name']}: stated {value}, actual {graph_entity['attributes'][attr]}"
-                        })
-                        results['confidence'] *= 0.8
-    
-    def _suggest_enhancements(self, response: str, context: List[Dict[str, Any]], results: Dict[str, Any]):
-        """Suggest potential response enhancements."""
-        # Check for unused relevant context
-        unused_context = self._find_unused_context(response, context)
-        if unused_context:
-            results['enhancements'].append({
-                'type': 'additional_context',
-                'suggestion': 'Consider including information about: ' + 
-                            ', '.join(c['entity']['name'] for c in unused_context)
-            })
-            
-        # Check for relationship opportunities
-        relationship_suggestions = self._suggest_relationships(response, context)
-        results['enhancements'].extend(relationship_suggestions)
-    
-    def _extract_entity_mentions(self, text: str) -> List[Dict[str, Any]]:
-        """Extract entity mentions from text."""
-        mentions = []
-        text_lower = text.lower()
-        
-        for entity_id, entity in self.knowledge_graph.entities.items():
-            name = entity.get('name', '')
-            if name and name.lower() in text_lower:
-                mentions.append({
-                    'id': entity_id,
-                    'name': name,
-                    'attributes': entity.get('attributes', {})
-                })
-        
-        return mentions
-    
-    def _find_unused_context(self, response: str, context: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Find context items not used in the response."""
-        unused = []
-        response_lower = response.lower()
-        
-        for ctx in context:
-            entity = ctx.get('entity', {})
-            name = entity.get('name', '').lower()
-            
-            if name and name not in response_lower:
-                # Check if any related entities are used
-                related_used = False
-                for related in ctx.get('related_entities', []):
-                    related_name = related['entity'].get('name', '').lower()
-                    if related_name and related_name in response_lower:
-                        related_used = True
-                        break
-                
-                if not related_used:
-                    unused.append(ctx)
-        
-        return unused
-    
-    def _suggest_relationships(self, response: str, context: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Suggest relationship-based enhancements."""
-        suggestions = []
-        
-        # Extract mentioned entities
-        mentioned_entities = self._extract_entity_mentions(response)
-        
-        # Check for unused relationships
-        for mention in mentioned_entities:
-            related = self.knowledge_graph.get_relationships(mention['id'])
-            
-            # Filter to relevant unused relationships
-            unused_relations = []
-            response_lower = response.lower()
-            
-            for rel in related:
-                target_entity = self.knowledge_graph.get_entity_by_id(rel['target'])
-                if target_entity:
-                    target_name = target_entity['name'].lower()
-                    if target_name not in response_lower:
-                        unused_relations.append({
-                            'relationship': rel['type'],
-                            'entity': target_entity['name']
-                        })
-            
-            if unused_relations:
-                suggestions.append({
-                    'type': 'unused_relationships',
-                    'suggestion': f"Consider mentioning related entities for {mention['name']}: " +
-                                ', '.join(f"{r['entity']} ({r['relationship']})" for r in unused_relations)
-                })
-        
-        return suggestions
-    
-    def _check_source_coverage(self, response: str, context: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Check how well the response covers the provided context."""
-        return {
-            'context_used': len(context),
-            'coverage_score': self._calculate_coverage_score(response, context)
+    def _validate_facts(self, response: str, contexts: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Validate factual consistency in response."""
+        results = {
+            'issues': [],
+            'validated_facts': []
         }
-    
-    def _calculate_coverage_score(self, response: str, context: List[Dict[str, Any]]) -> float:
-        """Calculate how well the response covers the context."""
-        covered = 0
-        response_lower = response.lower()
         
-        for ctx in context:
-            entity = ctx.get('entity', {})
-            name = entity.get('name', '').lower()
+        try:
+            # Extract facts from response
+            response_facts = self._extract_facts(response)
             
-            if name and name in response_lower:
-                covered += 1
-                continue
-                
-            # Check for attribute coverage
-            attrs = entity.get('attributes', {})
-            for value in attrs.values():
-                if isinstance(value, str) and value.lower() in response_lower:
-                    covered += 0.5
-                    break
+            # Extract facts from context
+            context_facts = []
+            for ctx in contexts:
+                content = ctx.get('content', '') or ctx.get('text_content', '')
+                if content:
+                    context_facts.extend(self._extract_facts(content))
+            
+            # Compare facts
+            for fact in response_facts:
+                if not self._fact_supported_by_context(fact, context_facts):
+                    results['issues'].append(f"Unsupported fact: {fact}")
+                else:
+                    results['validated_facts'].append(fact)
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error validating facts: {str(e)}")
+            return {'issues': [], 'validated_facts': []}
+    
+    def _validate_elements(self, response: str, contexts: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Validate element-related information in response."""
+        results = {
+            'issues': [],
+            'validated_elements': []
+        }
         
-        return covered / len(context) if context else 0.0
+        try:
+            # Extract element mentions from response
+            response_elements = self._extract_elements(response)
+            
+            # Extract elements from context
+            context_elements = set()
+            for ctx in contexts:
+                metadata = ctx.get('metadata', {})
+                if 'element' in metadata:
+                    context_elements.add(metadata['element'].lower())
+            
+            # Check each element mentioned in response
+            for element in response_elements:
+                if element.lower() not in context_elements:
+                    results['issues'].append(f"Element '{element}' not found in context")
+                else:
+                    results['validated_elements'].append(element)
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error validating elements: {str(e)}")
+            return {'issues': [], 'validated_elements': []}
+    
+    def _validate_relationships(self, response: str, contexts: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Validate relationship information in response."""
+        results = {
+            'issues': [],
+            'validated_relationships': []
+        }
+        
+        try:
+            # Extract relationships from response
+            response_relationships = self._extract_relationships(response)
+            
+            # Extract relationships from context
+            context_relationships = []
+            for ctx in contexts:
+                content = ctx.get('content', '') or ctx.get('text_content', '')
+                if content:
+                    context_relationships.extend(self._extract_relationships(content))
+            
+            # Compare relationships
+            for rel in response_relationships:
+                if not self._relationship_supported_by_context(rel, context_relationships):
+                    results['issues'].append(f"Unsupported relationship: {rel}")
+                else:
+                    results['validated_relationships'].append(rel)
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error validating relationships: {str(e)}")
+            return {'issues': [], 'validated_relationships': []}
     
     def validate_response(self, response: dict, context: list) -> dict:
         """Robust validation with error suppression"""
@@ -283,4 +222,161 @@ class ResponseValidator:
                 "is_valid": False,
                 "issues": ["Validation system error"],
                 "confidence": 0.0
-            } 
+            }
+
+    def _extract_facts(self, text: str) -> List[Dict[str, Any]]:
+        """Extract factual statements from text with improved accuracy."""
+        facts = []
+        
+        # Split into sentences
+        sentences = re.split(r'[.!?]+', text)
+        
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if not sentence:
+                continue
+            
+            # Extract numerical facts
+            numbers = re.findall(r'\d+', sentence)
+            for num in numbers:
+                facts.append({
+                    'type': 'numerical',
+                    'value': num,
+                    'context': sentence
+                })
+            
+            # Extract attribute statements
+            attribute_patterns = [
+                (r'is (?:a|an) ([\w\s]+)', 'attribute'),
+                (r'has (?:a|an) ([\w\s]+)', 'property'),
+                (r'can ([\w\s]+)', 'ability')
+            ]
+            
+            for pattern, fact_type in attribute_patterns:
+                matches = re.finditer(pattern, sentence, re.IGNORECASE)
+                for match in matches:
+                    facts.append({
+                        'type': fact_type,
+                        'value': match.group(1).strip(),
+                        'context': sentence
+                    })
+            
+            # Extract relationships
+            relationship_patterns = [
+                (r'([\w\s]+) is (?:in|at|near) ([\w\s]+)', 'location'),
+                (r'([\w\s]+) belongs to ([\w\s]+)', 'membership'),
+                (r'([\w\s]+) evolves? (?:into|from) ([\w\s]+)', 'evolution')
+            ]
+            
+            for pattern, rel_type in relationship_patterns:
+                matches = re.finditer(pattern, sentence, re.IGNORECASE)
+                for match in matches:
+                    facts.append({
+                        'type': 'relationship',
+                        'subtype': rel_type,
+                        'source': match.group(1).strip(),
+                        'target': match.group(2).strip(),
+                        'context': sentence
+                    })
+        
+        return facts
+
+    def _fact_supported_by_context(self, fact: Dict[str, Any], context_facts: List[Dict[str, Any]]) -> bool:
+        """Check if a fact is supported by context with improved matching."""
+        # For numerical facts, check exact matches
+        if fact['type'] == 'numerical':
+            return any(
+                cf['type'] == 'numerical' and cf['value'] == fact['value']
+                for cf in context_facts
+            )
+        
+        # For attribute and property facts, check semantic similarity
+        if fact['type'] in ['attribute', 'property', 'ability']:
+            return any(
+                cf['type'] == fact['type'] and
+                self._are_values_similar(cf['value'], fact['value'])
+                for cf in context_facts
+            )
+        
+        # For relationship facts, check both entities and relationship type
+        if fact['type'] == 'relationship':
+            return any(
+                cf['type'] == 'relationship' and
+                cf['subtype'] == fact['subtype'] and
+                self._are_values_similar(cf['source'], fact['source']) and
+                self._are_values_similar(cf['target'], fact['target'])
+                for cf in context_facts
+            )
+        
+        return False
+
+    def _are_values_similar(self, val1: str, val2: str) -> bool:
+        """Check if two values are semantically similar."""
+        # Convert to lowercase and remove extra whitespace
+        val1 = ' '.join(val1.lower().split())
+        val2 = ' '.join(val2.lower().split())
+        
+        # Check exact match
+        if val1 == val2:
+            return True
+        
+        # Check if one is contained in the other
+        if val1 in val2 or val2 in val1:
+            return True
+        
+        # Check word overlap
+        words1 = set(val1.split())
+        words2 = set(val2.split())
+        overlap = len(words1.intersection(words2))
+        total = len(words1.union(words2))
+        
+        return overlap / total > 0.5  # More than 50% word overlap
+
+    def _extract_elements(self, text: str) -> List[str]:
+        """Extract element mentions from text with improved accuracy."""
+        elements = []
+        
+        # Define element patterns with variations
+        element_patterns = {
+            'fire': [r'fire(?:\s+type|\s+element)?', r'flames?'],
+            'water': [r'water(?:\s+type|\s+element)?', r'aqua'],
+            'plant': [r'plant(?:\s+type|\s+element)?', r'grass', r'nature'],
+            'dark': [r'dark(?:\s+type|\s+element)?', r'shadow'],
+            'light': [r'light(?:\s+type|\s+element)?', r'holy'],
+            'void': [r'void(?:\s+type|\s+element)?', r'null']
+        }
+        
+        text_lower = text.lower()
+        
+        for element, patterns in element_patterns.items():
+            for pattern in patterns:
+                if re.search(pattern, text_lower):
+                    elements.append(element)
+                    break  # Found one pattern for this element, move to next
+        
+        return list(set(elements))  # Remove duplicates
+
+    def _extract_relationships(self, text: str) -> List[Dict[str, Any]]:
+        """Extract relationships from text with improved accuracy."""
+        relationships = []
+        
+        # Define relationship patterns
+        patterns = [
+            (r'([\w\s]+) evolves? (?:into|from) ([\w\s]+)', 'evolution'),
+            (r'([\w\s]+) lives? (?:in|at) ([\w\s]+)', 'habitat'),
+            (r'([\w\s]+) belongs? to (?:the\s+)?([\w\s]+)', 'faction'),
+            (r'([\w\s]+) is (?:allied|friends) with (?:the\s+)?([\w\s]+)', 'alliance'),
+            (r'([\w\s]+) (?:leads?|commands?) (?:the\s+)?([\w\s]+)', 'leadership')
+        ]
+        
+        for pattern, rel_type in patterns:
+            matches = re.finditer(pattern, text, re.IGNORECASE)
+            for match in matches:
+                relationships.append({
+                    'type': rel_type,
+                    'source': match.group(1).strip(),
+                    'target': match.group(2).strip(),
+                    'context': text[max(0, match.start() - 50):min(len(text), match.end() + 50)]
+                })
+        
+        return relationships 

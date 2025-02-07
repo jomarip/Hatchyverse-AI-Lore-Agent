@@ -39,13 +39,27 @@ class HatchyKnowledgeGraph:
         self.relationship_types = set()  # Track unique relationship types
         self.source_registry = defaultdict(list)  # Track entities by source
         self.generation_cache = {}  # Cache for generation lookups
-        self.relationships = []  # Store all relationships
+        
+        # Initialize relationship storage
+        self.relationships = {}  # Store all relationships by ID
+        
+        # Initialize relationship registry with core types
+        self.relationship_registry = {
+            'has_element': {'inverse': 'element_of', 'confidence_threshold': 0.9},
+            'evolves_from': {'inverse': 'evolves_into', 'confidence_threshold': 0.9},
+            'member_of': {'inverse': 'has_member', 'confidence_threshold': 0.8},
+            'allied_with': {'inverse': 'allied_with', 'confidence_threshold': 0.8},  # Symmetric
+            'opposes': {'inverse': 'opposed_by', 'confidence_threshold': 0.8},
+            'controls': {'inverse': 'controlled_by', 'confidence_threshold': 0.8},
+            'commands': {'inverse': 'commanded_by', 'confidence_threshold': 0.8}
+        }
         
         # Add indexes
         self._name_index = {}  # For fast name lookups
         self._type_index = defaultdict(set)  # For fast type-based lookups
         self._attribute_index = defaultdict(lambda: defaultdict(set))  # For attribute-based lookups
-        self._relationship_index = defaultdict(list)  # For relationship lookups
+        self._relationship_index = defaultdict(lambda: defaultdict(list))  # For relationship lookups by type and source
+        self._reverse_relationship_index = defaultdict(lambda: defaultdict(list))  # For reverse relationship lookups
         
         # Initialize statistics tracking
         self._stats = {
@@ -66,15 +80,32 @@ class HatchyKnowledgeGraph:
     def _init_core_entities(self):
         """Create base entities for core game concepts"""
         for element in self.core_elements:
-            self.add_entity(
-                name=element.capitalize(),
-                entity_type="element",
-                attributes={
-                    "name": element.capitalize(),
-                    "symbol": self._get_element_symbol(element)
-                }
-            )
-    
+            try:
+                element_name = element.capitalize()
+                # Check if element already exists
+                existing = None
+                for ent in self.entities.values():
+                    if (ent['name'].lower() == element_name.lower() and 
+                        ent['entity_type'] == 'element'):
+                        existing = ent
+                        break
+                
+                if not existing:
+                    logger.debug(f"Creating core element: {element_name}")
+                    self.add_entity(
+                        name=element_name,
+                        entity_type="element",
+                        attributes={
+                            "name": element_name,
+                            "symbol": self._get_element_symbol(element),
+                            "is_core_element": True
+                        },
+                        metadata={'core_element': True}
+                    )
+                    logger.debug(f"Successfully created core element: {element_name}")
+            except Exception as e:
+                logger.warning(f"Error creating core element {element}: {str(e)}")
+
     def _get_element_symbol(self, element: str) -> str:
         """Maps elements to display symbols"""
         symbols = {
@@ -214,64 +245,36 @@ class HatchyKnowledgeGraph:
         self,
         name: str,
         entity_type: str,
-        attributes: Dict[str, Any],
+        attributes: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         source: Optional[str] = None
     ) -> str:
-        """Add an entity to the knowledge graph with validation."""
-        if not name or not entity_type:
-            raise ValueError("Name and entity_type are required and cannot be empty")
-            
-        # Prepare entity data
-        entity_data = {
-            'name': name,
-            'entity_type': entity_type,
-            'attributes': attributes or {},
-            'metadata': metadata or {},
-            'source': source
-        }
-        
-        # Validate data
-        is_valid, validation_errors = self._validate_entity_data(entity_data)
-        if not is_valid:
-            raise ValueError(f"Invalid entity data: {', '.join(validation_errors)}")
-        
-        # Check consistency
-        is_consistent, consistency_issues = self._check_data_consistency(entity_data)
-        if not is_consistent:
-            raise ValueError(f"Data consistency issues: {', '.join(consistency_issues)}")
-        
-        # Generate ID and create entity
+        """Add an entity to the graph."""
         entity_id = str(uuid.uuid4())
+        
+        # Clean and validate name
+        name = str(name).strip()
+        if not name:
+            raise ValueError("Entity name cannot be empty")
+            
+        # Store entity
         entity = {
             'id': entity_id,
             'name': name,
             'entity_type': entity_type,
             'attributes': attributes or {},
-            '_metadata': metadata or {},
+            'metadata': metadata or {},
+            'source': source,
             'created_at': datetime.now().isoformat()
         }
-        
-        if source:
-            entity['_metadata']['source'] = source
-            self.source_registry[source].append(entity_id)
-        
-        # Store entity and update indexes
         self.entities[entity_id] = entity
-        self._update_indexes(entity_id, entity)
         
-        # Add to graph
-        self.graph.add_node(entity_id, **entity)
+        # Update indexes
+        self._name_index[name.lower()] = entity_id
+        self._type_index.setdefault(entity_type, set()).add(entity_id)
         
-        # Extract and cache generation if present
-        generation = self._extract_generation(source, entity)
-        if generation:
-            if generation not in self.generation_cache:
-                self.generation_cache[generation] = set()
-            self.generation_cache[generation].add(entity_id)
-            # Also add generation to attributes if not already present
-            if 'generation' not in attributes:
-                attributes['generation'] = generation
+        # Log entity creation
+        logger.debug(f"Created entity: {name} ({entity_id}) of type {entity_type}")
         
         return entity_id
 
@@ -300,16 +303,72 @@ class HatchyKnowledgeGraph:
         return successful_ids, failed_entities
 
     def get_entity_by_name(self, name: str) -> Optional[Dict[str, Any]]:
-        """Get entity by name using index."""
-        entity_id = self._name_index.get(name)
-        return self.entities.get(entity_id) if entity_id else None
+        """Get entity by name."""
+        entity_id = self._name_index.get(name.lower())
+        if entity_id:
+            return self.get_entity(entity_id)
+        return None
+
+    def find_entity_by_name(
+        self,
+        name: str,
+        fuzzy_match: bool = True,
+        entity_type: Optional[str] = None
+    ) -> Optional[str]:
+        """Find entity ID by name with improved matching."""
+        if not name:
+            return None
+            
+        name_lower = name.lower()
+        
+        # Try exact match first
+        for eid, entity in self.entities.items():
+            if entity['name'].lower() == name_lower:
+                if not entity_type or entity['entity_type'] == entity_type:
+                    return eid
+        
+        # Try fuzzy matching if enabled
+        if fuzzy_match:
+            best_match = None
+            best_score = 0
+            
+            for eid, entity in self.entities.items():
+                if entity_type and entity['entity_type'] != entity_type:
+                    continue
+                    
+                # Calculate similarity score
+                score = self._calculate_name_similarity(name_lower, entity['name'].lower())
+                if score > best_score and score > 0.8:  # 80% similarity threshold
+                    best_match = eid
+                    best_score = score
+            
+            if best_match:
+                logger.debug(f"Fuzzy matched '{name}' to '{self.entities[best_match]['name']}'")
+                return best_match
+        
+        return None
+
+    def _calculate_name_similarity(self, name1: str, name2: str) -> float:
+        """Calculate similarity between two names."""
+        # Simple word overlap for now
+        words1 = set(name1.split())
+        words2 = set(name2.split())
+        
+        if not words1 or not words2:
+            return 0
+            
+        intersection = words1.intersection(words2)
+        union = words1.union(words2)
+        
+        return len(intersection) / len(union)
 
     def search_entities(
         self,
         query: str,
         entity_type: Optional[str] = None,
         filters: Optional[Dict[str, Any]] = None,
-        limit: int = 10
+        limit: int = 10,
+        file_filter: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """Search entities using indexes for better performance."""
         results = set()
@@ -332,6 +391,10 @@ class HatchyKnowledgeGraph:
         # Search through candidates
         for entity_id in candidate_ids:
             entity = self.entities[entity_id]
+            
+            # Check if entity matches file filter
+            if file_filter and entity.get('source') != file_filter:
+                continue
             
             # Check name match
             if query in entity['name'].lower():
@@ -398,68 +461,84 @@ class HatchyKnowledgeGraph:
         self,
         source_id: str,
         target_id: str,
-        relationship_type: str
-    ):
-        """Add a relationship between two entities."""
+        relationship_type: str,
+        attributes: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> Optional[str]:
+        """Add a relationship between two entities with improved fallback handling."""
         try:
-            logger.debug(f"=== Starting relationship creation ===")
-            logger.debug(f"Source ID: {source_id}")
-            logger.debug(f"Target ID: {target_id}")
-            logger.debug(f"Relationship Type: {relationship_type}")
+            # Validate relationship type
+            if not self.is_valid_type(relationship_type):
+                logger.warning(f"Invalid relationship type: {relationship_type}")
+                return None
+
+            # Handle source entity
+            if source_id not in self.entities:
+                logger.warning(f"Creating fallback source entity: {source_id}")
+                source_id = self.add_entity(
+                    name=source_id,
+                    entity_type='auto_source',
+                    attributes={'auto_created': True},
+                    metadata={'source': 'fallback_creation'}
+                )
+
+            # Handle target entity
+            if target_id not in self.entities:
+                logger.warning(f"Creating fallback target entity: {target_id}")
+                target_id = self.add_entity(
+                    name=target_id,
+                    entity_type='auto_target',
+                    attributes={'auto_created': True},
+                    metadata={'source': 'fallback_creation'}
+                )
+
+            # Generate relationship ID
+            relationship_id = str(uuid.uuid4())
             
-            # Validate source and target exist
-            source_entity = self.get_entity(source_id)
-            target_entity = self.get_entity(target_id)
-            
-            if not source_entity or not target_entity:
-                error_msg = f"Source or target entity not found: {source_id} -> {target_id}"
-                logger.error(error_msg)
-                raise ValueError(error_msg)
-            
-            logger.debug(f"Source entity found: {source_entity['name']}")
-            logger.debug(f"Target entity found: {target_entity['name']}")
-            
-            # Create relationship object
-            relationship = {
+            # Create relationship data
+            relationship_data = {
+                'id': relationship_id,
                 'source_id': source_id,
                 'target_id': target_id,
                 'type': relationship_type,
-                'metadata': {}
+                'attributes': attributes or {},
+                'metadata': {
+                    **(metadata or {}),
+                    'created_at': datetime.now().isoformat(),
+                    'confidence': metadata.get('confidence', 1.0) if metadata else 1.0
+                }
             }
-            
-            # Add to relationships list
-            self.relationships.append(relationship)
-            logger.debug(f"Added relationship to relationships list. Total relationships: {len(self.relationships)}")
-            
-            # Update relationship index
-            self._relationship_index[source_id].append(relationship)
-            self._relationship_index[target_id].append(relationship)
-            logger.debug(f"Updated relationship index for both source and target")
-            
-            # Add to relationship types set and update statistics
-            self.relationship_types.add(relationship_type)
-            self._stats['total_relationships'] += 1
-            self._stats['relationship_counts'][relationship_type] += 1
-            
-            logger.debug(f"Added relationship type to set. Current types: {self.relationship_types}")
-            logger.debug(f"Updated statistics. Total relationships: {self._stats['total_relationships']}")
-            logger.debug(f"Relationship counts by type: {dict(self._stats['relationship_counts'])}")
-            
-            # Add to graph structure
+
+            # Store relationship
+            self.relationships[relationship_id] = relationship_data
+
+            # Add to graph
             self.graph.add_edge(
                 source_id,
                 target_id,
-                type=relationship_type,
-                metadata=relationship['metadata']
+                key=relationship_id,
+                **relationship_data
             )
-            logger.debug("Added relationship to graph structure")
+
+            # Update indexes
+            self._relationship_index[relationship_type][source_id].append(relationship_data)
+            self._reverse_relationship_index[relationship_type][target_id].append(relationship_data)
+            self.relationship_types.add(relationship_type)
             
-            logger.info(f"Successfully created relationship: {source_entity['name']} -{relationship_type}-> {target_entity['name']}")
-            logger.debug("=== Relationship creation completed ===")
+            # Update statistics
+            self._stats['total_relationships'] += 1
+            self._stats['relationship_counts'][relationship_type] += 1
+
+            # Log relationship creation with entity names for clarity
+            source_name = self.entities[source_id]['name']
+            target_name = self.entities[target_id]['name']
+            logger.info(f"Created relationship: {source_name} -{relationship_type}-> {target_name}")
             
+            return relationship_id
+
         except Exception as e:
             logger.error(f"Error creating relationship: {str(e)}")
-            raise
+            return None
 
     def get_entity(self, entity_id: str) -> Optional[Dict[str, Any]]:
         """Get entity by ID."""
@@ -482,7 +561,8 @@ class HatchyKnowledgeGraph:
         query: str,
         entity_type: Optional[str] = None,
         filters: Optional[Dict[str, Any]] = None,
-        limit: int = 10
+        limit: int = 10,
+        file_filter: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """Search entities by name or attributes."""
         results = []
@@ -504,6 +584,10 @@ class HatchyKnowledgeGraph:
                             break
                     if skip:
                         continue
+                
+                # Check if entity matches file filter
+                if file_filter and entity.get('source') != file_filter:
+                    continue
                 
                 # Check name match
                 name = entity.get('name', '')
@@ -551,19 +635,21 @@ class HatchyKnowledgeGraph:
         
         relationships = []
         
-        # Get relationships where entity is source
+        # Get outgoing relationships
         if direction in ['both', 'outgoing']:
-            for rel in self._relationship_index[entity_id]:
-                if rel['source'] == entity_id:
-                    if not relationship_type or rel['type'] == relationship_type:
-                        relationships.append(rel)
+            if relationship_type:
+                relationships.extend(self._relationship_index[relationship_type][entity_id])
+            else:
+                for rel_type in self._relationship_index:
+                    relationships.extend(self._relationship_index[rel_type][entity_id])
         
-        # Get relationships where entity is target
+        # Get incoming relationships
         if direction in ['both', 'incoming']:
-            for rel in self._relationship_index[entity_id]:
-                if rel['target'] == entity_id:
-                    if not relationship_type or rel['type'] == relationship_type:
-                        relationships.append(rel)
+            if relationship_type:
+                relationships.extend(self._reverse_relationship_index[relationship_type][entity_id])
+            else:
+                for rel_type in self._reverse_relationship_index:
+                    relationships.extend(self._reverse_relationship_index[rel_type][entity_id])
         
         return relationships
     
@@ -583,7 +669,7 @@ class HatchyKnowledgeGraph:
     def get_entity_types(self) -> List[str]:
         """Get all entity types in the graph."""
         return list({entity['entity_type'] for entity in self.entities.values()})
-    
+
     def get_relationship_types(self) -> List[str]:
         """Get all relationship types in the graph."""
         return list(self.relationship_types)
@@ -613,7 +699,7 @@ class HatchyKnowledgeGraph:
         
         # Update relationship counts
         relationship_counts = defaultdict(int)
-        for rel in self.relationships:
+        for rel in self.relationships.values():
             relationship_counts[rel['type']] += 1
         self._stats['relationship_counts'].update(relationship_counts)
         
@@ -799,177 +885,170 @@ class HatchyKnowledgeGraph:
         return graph
 
     def _process_relationships(self, entity_id: str, entity: Dict[str, Any]):
-        """Process and store entity relationships."""
-        # Evolution relationships
-        if 'evolves_from' in entity:
-            self.add_relationship(entity_id, entity['evolves_from'], 'evolves_from')
+        """Process and store entity relationships with enhanced relationship types."""
+        try:
+            # Evolution relationships
+            if 'evolves_from' in entity:
+                self.add_relationship(entity_id, entity['evolves_from'], 'evolves_from')
             
-        # Element relationships
-        if 'Element' in entity:
-            self.add_relationship(entity_id, f"element_{entity['Element'].lower()}", 'has_element')
+            # Element relationships
+            if 'Element' in entity:
+                element_id = self.resolve_entity(f"element_{entity['Element'].lower()}", 'element')
+                self.add_relationship(entity_id, element_id, 'has_element')
             
-        # Size/mountable relationships
-        description = entity.get('Description', '').lower()
-        if any(kw in description for kw in ['large', 'huge', 'massive']):
-            gen = entity.get('_metadata', {}).get('generation')
-            if gen == '3' or 'final' in description:
-                self.add_relationship(entity_id, 'mountable', 'can_be_mounted')
-                
-        # Process explicit relationships
-        for rel in entity.get('relationships', []):
-            if isinstance(rel, dict) and 'target_id' in rel and 'type' in rel:
-                self.add_relationship(entity_id, rel['target_id'], rel['type'])
-        
-    def get_entities_by_generation(self, generation: str) -> List[Dict[str, Any]]:
-        """Get all entities from a specific generation."""
-        if generation in self.generation_cache:
-            return [self.entities[eid] for eid in self.generation_cache[generation]]
-        return []
-    
-    def get_entities_by_relationship(self, relationship_type: str) -> List[Dict[str, Any]]:
-        """Get all entities with a specific relationship type."""
-        entities = []
-        for entity_id, rels in self.relationships.items():
-            if any(r['type'] == relationship_type for r in rels):
-                if entity_id in self.entities:
-                    entities.append(self.entities[entity_id])
-        return entities
-    
-    def get_entities_by_source(self, source: str) -> List[Dict[str, Any]]:
-        """Get all entities from a specific source."""
-        return [self.entities[eid] for eid in self.source_registry.get(source, [])]
-    
-    def get_entity_relationships(self, entity_id: str) -> List[Dict[str, Any]]:
-        """Get all relationships for an entity."""
-        relationships = []
-        
-        # Get outgoing relationships
-        for _, target, data in self.graph.edges(entity_id, data=True):
-            target_entity = self.entities[target]
-            relationships.append({
-                'source': entity_id,
-                'target': target,
-                'target_name': target_entity['name'],
-                'type': data['type'],
-                'direction': 'outgoing',
-                'attributes': {k: v for k, v in data.items() if k != 'type'}
-            })
-        
-        # Get incoming relationships
-        for source, _, data in self.graph.in_edges(entity_id, data=True):
-            source_entity = self.entities[source]
-            relationships.append({
-                'source': source,
-                'source_name': source_entity['name'],
-                'target': entity_id,
-                'type': data['type'],
-                'direction': 'incoming',
-                'attributes': {k: v for k, v in data.items() if k != 'type'}
-            })
-        
-        return relationships
-
-    def get_entity_count(self, filters: Dict[str, Any] = None) -> int:
-        """Count entities matching filter criteria."""
-        if not filters:
-            return len(self.entities)
+            # Size/mountable relationships
+            description = entity.get('Description', '').lower()
+            if any(kw in description for kw in ['large', 'huge', 'massive']):
+                gen = entity.get('_metadata', {}).get('generation')
+                if gen == '3' or 'final' in description:
+                    self.add_relationship(entity_id, 'mountable', 'can_be_mounted')
             
-        def matches_filter(entity: Dict[str, Any], key: str, value: Any) -> bool:
-            """Check if entity matches a single filter criterion."""
-            if key == 'entity_type':
-                return entity.get('entity_type', '').lower() == str(value).lower()
-            elif key == 'generation':
-                return str(entity.get('attributes', {}).get('generation', '')) == str(value)
-            elif key == 'element':
-                entity_element = entity.get('attributes', {}).get('element', '')
-                return entity_element and entity_element.lower() == str(value).lower()
-            else:
-                entity_value = entity.get('attributes', {}).get(key)
-                if entity_value is None:
-                    return False
-                return str(entity_value).lower() == str(value).lower()
+            # Faction relationships
+            if 'Faction' in entity:
+                faction_id = self.resolve_entity(entity['Faction'], 'faction')
+                self.add_relationship(entity_id, faction_id, 'member_of')
+            
+            # Political relationships
+            if 'Political Conflict' in entity:
+                conflicts = entity['Political Conflict'].split(';')
+                for conflict in conflicts:
+                    conflict = conflict.strip()
+                    if conflict:
+                        conflict_id = self.resolve_entity(conflict, 'faction')
+                        self.add_relationship(entity_id, conflict_id, 'in_conflict_with')
+            
+            # Location relationships
+            if 'Location' in entity:
+                location_id = self.resolve_entity(entity['Location'], 'location')
+                self.add_relationship(entity_id, location_id, 'located_in')
+            
+            # Nation relationships
+            if 'Nation' in entity:
+                nation_id = self.resolve_entity(entity['Nation'], 'nation')
+                self.add_relationship(entity_id, nation_id, 'belongs_to')
+            
+            # Group relationships
+            if 'Groups' in entity:
+                groups = entity['Groups'].split(',')
+                for group in groups:
+                    group = group.strip()
+                    if group:
+                        group_id = self.resolve_entity(group, 'faction')
+                        self.add_relationship(entity_id, group_id, 'member_of')
+            
+            # Process explicit relationships
+            for rel in entity.get('relationships', []):
+                if isinstance(rel, dict) and 'target_id' in rel and 'type' in rel:
+                    self.add_relationship(entity_id, rel['target_id'], rel['type'])
+            
+            # Process narrative relationships from description
+            if 'Description' in entity:
+                self._process_narrative_relationships(entity_id, entity['Description'])
+            
+        except Exception as e:
+            logger.error(f"Error processing relationships for entity {entity_id}: {str(e)}")
+
+    def _process_narrative_relationships(self, entity_id: str, text: str):
+        """Extract relationships from narrative text."""
+        patterns = {
+            'allied_with': [
+                r'allied with (the )?([\w\s]+)',
+                r'alliance with (the )?([\w\s]+)'
+            ],
+            'at_war_with': [
+                r'at war with (the )?([\w\s]+)',
+                r'fighting against (the )?([\w\s]+)'
+            ],
+            'leads': [
+                r'leader of (the )?([\w\s]+)',
+                r'commands (the )?([\w\s]+)'
+            ],
+            'located_in': [
+                r'in (the )?([\w\s]+ region)',
+                r'within (the )?([\w\s]+ kingdom)',
+                r'located in (the )?([\w\s]+)'
+            ]
+        }
         
-        return sum(
-            1 for e in self.entities.values()
-            if all(matches_filter(e, k, v) for k, v in filters.items())
-        )
+        for rel_type, pattern_list in patterns.items():
+            for pattern in pattern_list:
+                matches = re.finditer(pattern, text, re.IGNORECASE)
+                for match in matches:
+                    target_name = match.group(2).strip()
+                    if target_name:
+                        # Determine entity type based on relationship
+                        entity_type = 'faction'
+                        if 'region' in target_name.lower():
+                            entity_type = 'location'
+                        elif 'kingdom' in target_name.lower():
+                            entity_type = 'nation'
+                        
+                        target_id = self.resolve_entity(target_name, entity_type)
+                        self.add_relationship(entity_id, target_id, rel_type)
 
-    def get_entities_by_element(self, element: str) -> List[Dict[str, Any]]:
-        """Get all entities of a specific element."""
-        element = element.lower()
-        return [
-            self._prepare_entity_for_output(entity)
-            for entity in self.entities.values()
-            if entity.get('attributes', {}).get('element', '').lower() == element
-        ]
-
-    def get_entities_by_generation(self, generation: str) -> List[Dict[str, Any]]:
-        """Get entities by generation."""
-        return [
-            self._prepare_entity_for_output(entity)
-            for entity in self.entities.values()
-            if str(entity.get('attributes', {}).get('generation', '')) == str(generation)
-        ]
-
-    def find_entity_by_name(self, name: str, fuzzy_match: bool = True) -> Optional[Dict[str, Any]]:
-        """Find entity by name with optional fuzzy matching."""
+    def resolve_entity(self, name: str, entity_type: str) -> str:
+        """Resolve or create entity by name/type with improved matching."""
         if not name:
             return None
-            
-        name_lower = name.lower().strip()
         
-        # Try exact match first
-        for entity in self.entities.values():
-            entity_name = entity.get('name', '').lower().strip()
-            if entity_name == name_lower:
-                return entity
+        name = name.strip()
         
-        if fuzzy_match:
-            # Try fuzzy matching if exact match fails
-            best_match = None
-            best_ratio = 0
+        # Special handling for elements
+        if entity_type == 'element':
+            name = name.split('_')[-1].capitalize()  # Handle 'element_fire' -> 'Fire'
             
-            for entity in self.entities.values():
-                entity_name = entity.get('name', '').lower().strip()
-                # Check if name is contained or similar
-                if (name_lower in entity_name or 
-                    entity_name in name_lower or 
-                    self._string_similarity(name_lower, entity_name) > 0.8):
-                    ratio = self._string_similarity(name_lower, entity_name)
-                    if ratio > best_ratio:
-                        best_ratio = ratio
-                        best_match = entity
-            
-            return best_match
-        
-        return None
-
-    def _string_similarity(self, s1: str, s2: str) -> float:
-        """Calculate string similarity ratio."""
-        # Simple Levenshtein-based similarity
-        max_len = max(len(s1), len(s2))
-        if max_len == 0:
-            return 0
-        distance = sum(1 for a, b in zip(s1, s2) if a != b) + abs(len(s1) - len(s2))
-        return 1 - (distance / max_len)
-
-    def resolve_entity(self, name: str, entity_type: str) -> Optional[str]:
-        """Fuzzy match entity by name/type with fallback creation"""
         # First try exact match
         for ent in self.entities.values():
-            if ent['attributes'].get('name', '').lower() == name.lower() and ent['type'] == entity_type:
+            if (ent['name'].lower() == name.lower() and 
+                ent['entity_type'] == entity_type):
                 return ent['id']
         
         # Then try partial match
         for ent in self.entities.values():
-            if name.lower() in ent['attributes'].get('name', '').lower() and ent['type'] == entity_type:
+            if (name.lower() in ent['name'].lower() and 
+                ent['entity_type'] == entity_type):
                 return ent['id']
         
-        # Fallback: Create placeholder entity
-        new_id = f"{entity_type}_{name.lower().replace(' ', '_')}"
+        # Special handling for elements - create if it's a core element
+        if entity_type == 'element' and name.lower() in {e.lower() for e in self.core_elements}:
+            new_id = str(uuid.uuid4())
+            self.add_entity(
+                name=name.capitalize(),
+                entity_type=entity_type,
+                attributes={
+                    'name': name.capitalize(),
+                    'symbol': self._get_element_symbol(name.lower()),
+                    'is_core_element': True
+                },
+                metadata={'auto_generated': True, 'core_element': True}
+            )
+            return new_id
+        
+        # Create new placeholder entity if not found
+        new_id = str(uuid.uuid4())
         self.add_entity(
-            entity_id=new_id,
+            name=name,
             entity_type=entity_type,
-            attributes={'name': name, 'auto_generated': True}
+            attributes={'is_placeholder': True, 'name': name},
+            metadata={'auto_generated': True, 'needs_resolution': True}
         )
-        return new_id 
+        
+        logger.info(f"Created placeholder entity: {name} ({entity_type})")
+        return new_id
+
+    def get_entities(self, entity_type: Optional[str] = None, element: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Get all entities, optionally filtered by type and element."""
+        entities = []
+        
+        for entity in self.entities.values():
+            if entity_type and entity.get('entity_type') != entity_type:
+                continue
+            if element and entity.get('element', '').lower() != element.lower():
+                continue
+            entities.append(entity)
+        
+        return entities
+
+    def is_valid_type(self, relationship_type: str) -> bool:
+        """Check if a relationship type is valid."""
+        return relationship_type in self.relationship_registry 
