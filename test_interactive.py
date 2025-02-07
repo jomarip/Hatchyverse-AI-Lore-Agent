@@ -100,12 +100,30 @@ class InteractiveTest:
             metadatas=[{"source": "hatchyverse"} for _ in texts]  # Add metadata
         )
         
-        # Initialize chatbot with optimized retrieval
+        # Initialize chatbot with optimized retrieval and data_dir
         self.chatbot = EnhancedChatbot(
             llm=self.llm,
             knowledge_graph=self.knowledge_graph,
-            vector_store=self.vector_store
+            vector_store=self.vector_store,  # Make sure vector_store is passed
+            data_dir=self.data_dir
         )
+        
+        # Verify initialization
+        logger.info("Verifying chatbot initialization...")
+        if hasattr(self.chatbot, 'vector_store'):
+            logger.info("Vector store initialized successfully")
+        else:
+            logger.warning("Vector store not initialized")
+            
+        if hasattr(self.chatbot, 'knowledge_graph'):
+            logger.info("Knowledge graph initialized successfully")
+        else:
+            logger.warning("Knowledge graph not initialized")
+            
+        if hasattr(self.chatbot, 'retriever'):
+            logger.info("Retriever initialized successfully")
+        else:
+            logger.warning("Retriever not initialized")
         
         # Load data
         logger.info("Loading data...")

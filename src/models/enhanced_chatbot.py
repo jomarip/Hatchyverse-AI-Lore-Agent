@@ -14,6 +14,7 @@ from .relationship_extractor import AdaptiveRelationshipExtractor
 from .registry import RelationshipRegistry
 from .context_manager import EnhancedContextManager
 import re
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -222,12 +223,15 @@ class EnhancedChatbot:
         self,
         llm: BaseLLM,
         knowledge_graph: Optional[HatchyKnowledgeGraph] = None,
-        vector_store: Optional[VectorStore] = None
+        vector_store: Optional[VectorStore] = None,
+        data_dir: Optional[Path] = None
     ):
         """Initialize chatbot with required components."""
         self.llm = llm
         self.knowledge_graph = knowledge_graph or HatchyKnowledgeGraph()
         self.relationship_registry = RelationshipRegistry()
+        self.data_dir = data_dir or Path("data")
+        self.vector_store = vector_store  # Store vector_store directly
         
         # Initialize retriever from vector store if provided
         self.retriever = None
@@ -235,11 +239,11 @@ class EnhancedChatbot:
             # Configure retriever with optimized settings
             self.retriever = vector_store.as_retriever(
                 search_kwargs={
-                    "k": 8,  # Increased for better coverage
-                    "score_threshold": 0.5,  # Lowered for better recall
-                    "fetch_k": 20,  # Fetch more candidates for filtering
-                    "lambda_mult": 0.5,  # Adjust diversity vs. relevance
-                    "filter_duplicates": True  # Remove duplicate content
+                    "k": 8,
+                    "score_threshold": 0.5,
+                    "fetch_k": 20,
+                    "lambda_mult": 0.5,
+                    "filter_duplicates": True
                 }
             )
         
@@ -361,17 +365,73 @@ class EnhancedChatbot:
             # Try knowledge graph lookup first for specific entities
             kg_contexts = self._get_knowledge_graph_context(expanded_query)
             if kg_contexts:
+                logger.debug(f"Found {len(kg_contexts)} knowledge graph contexts")
                 contexts.extend(kg_contexts)
             
-            # Get vector store context
-            if self.retriever:
-                docs = self.retriever.invoke(expanded_query)
-                contexts.extend([{
-                    'text_content': doc.page_content,
-                    'metadata': doc.metadata
-                } for doc in docs])
+            # Get vector store context - try multiple search strategies
+            if hasattr(self, 'vector_store') and self.vector_store:  # Check attribute exists
+                try:
+                    # First try similarity search with scoring
+                    if hasattr(self.vector_store, 'similarity_search_with_score'):
+                        docs_and_scores = self.vector_store.similarity_search_with_score(
+                            expanded_query,
+                            k=8,
+                            score_threshold=0.5
+                        )
+                        logger.debug(f"Found {len(docs_and_scores)} vector store results with scores")
+                        for doc, score in docs_and_scores:
+                            contexts.append({
+                                'text_content': doc.page_content,
+                                'metadata': {
+                                    **doc.metadata,
+                                    'score': score,
+                                    'source': 'vector_store'
+                                }
+                            })
+                    # Fallback to regular similarity search
+                    else:
+                        docs = self.vector_store.similarity_search(
+                            expanded_query,
+                            k=8
+                        )
+                        logger.debug(f"Found {len(docs)} vector store results")
+                        contexts.extend([{
+                            'text_content': doc.page_content,
+                            'metadata': {
+                                **doc.metadata,
+                                'score': 0.8,  # Default score
+                                'source': 'vector_store'
+                            }
+                        } for doc in docs])
+                        
+                except Exception as e:
+                    logger.error(f"Vector store search failed: {str(e)}")
+                    # Fallback to retriever
+                    if self.retriever:
+                        try:
+                            docs = self.retriever.invoke(expanded_query)
+                            logger.debug(f"Found {len(docs)} retriever results")
+                            contexts.extend([{
+                                'text_content': doc.page_content,
+                                'metadata': doc.metadata
+                            } for doc in docs])
+                        except Exception as e2:
+                            logger.error(f"Retriever fallback failed: {str(e2)}")
             
-            logger.debug(f"Retrieved {len(contexts)} context items")
+            # If still no context, try direct file search
+            if not contexts:
+                file_contexts = self._search_text_files(expanded_query, query_type)
+                logger.debug(f"Found {len(file_contexts)} file search results")
+                contexts.extend(file_contexts)
+            
+            logger.debug(f"Retrieved {len(contexts)} total context items")
+            # Log sample of contexts for debugging
+            if contexts:
+                logger.debug("Sample context:")
+                for ctx in contexts[:2]:  # Show first 2 contexts
+                    logger.debug(f"- Source: {ctx.get('metadata', {}).get('source', 'unknown')}")
+                    logger.debug(f"- Score: {ctx.get('metadata', {}).get('score', 'unknown')}")
+                    logger.debug(f"- Content preview: {str(ctx.get('text_content', ''))[:100]}...")
             
             # Format context with size limits
             formatted_context = self._format_context(contexts)
@@ -798,3 +858,85 @@ class EnhancedChatbot:
                 logger.debug(f"Error getting relationships: {str(e)}")
         
         return "\n".join(elements) 
+
+    def _search_text_files(self, query: str, query_type: str) -> List[Dict[str, Any]]:
+        """Search through text files directly when other methods fail."""
+        contexts = []
+        
+        # Define relevant files based on query type
+        file_patterns = {
+            'world': [
+                "Hatchy World _ world design.txt",
+                "Hatchy World Comic_ Chaos saga.txt",
+                "HWCS - Simplified main arc and arc suggestions.txt"
+            ],
+            'location': [
+                "Hatchy World _ world design.txt",
+                "Hatchyverse Eco Presentation v3.txt"
+            ],
+            'base': [
+                "Hatchy World _ world design.txt",
+                "Hatchy World Comic_ Chaos saga.txt",
+                "HWCS - Simplified main arc and arc suggestions.txt",
+                "Hatchyverse Eco Presentation v3.txt"
+            ]
+        }
+        
+        # Get relevant file patterns
+        patterns = file_patterns.get(query_type, file_patterns['base'])
+        
+        # Search each file
+        for pattern in patterns:
+            try:
+                file_path = self.data_dir / pattern
+                if file_path.exists():
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                        
+                        # Split into chunks for better context
+                        chunks = self._split_content(content)
+                        
+                        # Search chunks for query terms
+                        query_terms = set(query.lower().split())
+                        for chunk in chunks:
+                            chunk_terms = set(chunk.lower().split())
+                            # Calculate term overlap
+                            overlap = len(query_terms & chunk_terms)
+                            if overlap > 0:
+                                contexts.append({
+                                    'text_content': chunk,
+                                    'metadata': {
+                                        'source': pattern,
+                                        'score': overlap / len(query_terms),
+                                        'type': 'text'
+                                    }
+                                })
+            except Exception as e:
+                logger.error(f"Error searching file {pattern}: {str(e)}")
+                continue
+        
+        return contexts
+
+    def _split_content(self, content: str, chunk_size: int = 1000) -> List[str]:
+        """Split content into manageable chunks."""
+        chunks = []
+        sentences = content.split('.')
+        current_chunk = []
+        current_size = 0
+        
+        for sentence in sentences:
+            sentence = sentence.strip() + '.'
+            sentence_size = len(sentence)
+            
+            if current_size + sentence_size > chunk_size and current_chunk:
+                chunks.append(' '.join(current_chunk))
+                current_chunk = [sentence]
+                current_size = sentence_size
+            else:
+                current_chunk.append(sentence)
+                current_size += sentence_size
+        
+        if current_chunk:
+            chunks.append(' '.join(current_chunk))
+            
+        return chunks 
